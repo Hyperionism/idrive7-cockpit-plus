@@ -120,9 +120,10 @@ const ipcServer = net.createServer((socket) => {
             if (ownedCount >= MAX_LAYERS_PER_CONN) {
                 return sendError('layer', cmd.ref, 'layer cap exceeded (' + MAX_LAYERS_PER_CONN + ')');
             }
+            const isImage = !cmd.kind || cmd.kind === 'image';
             const iw = cmd.iw || cmd.w || 1;
             const ih = cmd.ih || cmd.h || 1;
-            if (allocatedBytes() + iw * ih * 8 > MAX_PIXEL_MEMORY) {
+            if (isImage && allocatedBytes() + iw * ih * 8 > MAX_PIXEL_MEMORY) {
                 return sendError('layer', cmd.ref, 'pixel memory cap reached');
             }
             const id = connId + ':' + cmd.ref;
@@ -132,6 +133,7 @@ const ipcServer = net.createServer((socket) => {
                 ref: cmd.ref,
                 target: cmd.target || 'hud',
                 klass: cmd.class || 'overlay',
+                kind: cmd.kind || 'image',
                 z: cmd.z || 0,
                 x: cmd.x || 0,
                 y: cmd.y || 0,
@@ -141,12 +143,14 @@ const ipcServer = net.createServer((socket) => {
                 ih,
                 visible: cmd.visible !== 0,
                 contend: cmd.contend !== 0,
-                pixels: Buffer.alloc(iw * ih * 4),
+                pixels: isImage ? Buffer.alloc(iw * ih * 4) : null,
                 initialized: false,
             };
             activeLayers.set(id, entry);
             sendSocketEvent(socket, { ev: 'layer', ref: cmd.ref, state: entry.visible ? 'shown' : 'hidden' });
             pushSse({ t: 'scene', layers: serializeScene(), pixels: allocatedBytes() });
+        } else if (cmd.op === 'host' || cmd.op === 'unhost' || cmd.op === 'uniform' || cmd.op === 'bind') {
+            // Accepted cleanly by bench simulator
         } else if (cmd.op === 'set') {
             const entry = activeLayers.get(connId + ':' + cmd.ref);
             if (!entry) return sendError('set', cmd.ref, 'unknown layer');

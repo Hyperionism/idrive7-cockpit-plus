@@ -5,7 +5,7 @@
       "id": "cockpit-fullview",
       "kind": "tool",
       "title": "Cockpit+ FullView Companion",
-      "description": "Configures waze-on-cluster for pure 1632x720 FullView CarPlay/AMAP/Baidu map projection alongside Cockpit+ by disabling overlapping C++ speed/guidance/trip pods cleanly and reversibly",
+      "description": "Keeps legacy waze-on-cluster 2.x forks in pure FullView mode without overlapping C++ pods cleanly and reversibly",
       "version": "1.0.0",
       "mguHmi": ["ID7"],
       "path": "tools/cockpit-fullview"
@@ -14,17 +14,18 @@
       "id": "id7_cockpit_plus",
       "kind": "app",
       "title": "Cockpit+",
-      "description": "Cockpit+ for BMW iDrive 7 (KOMBI4 + HUD): calibrated Cluster+ wing widgets, per-line left speed telemetry, 5AU top-center CarPlay/Baidu lane guidance, centered iOS turn card & ETA pill over pure FullView map, and bold HUD navigation",
-      "version": "0.9.3",
+      "description": "Cockpit+ for BMW iDrive 7 (KOMBI4 + HUD): calibrated Cluster+ wing widgets, per-line left speed telemetry, 5AU top-center CarPlay/Baidu lane guidance, centered iOS turn card & ETA pill over hosted FullView 1632x720 map, and bold HUD navigation",
+      "version": "0.9.4",
       "mguHmi": ["ID7"],
       "requires": {
-        "cluster-render": "0.4.0",
+        "cluster-render": "0.8.14",
+        "waze-on-cluster": "0.14.16",
         "cockpit-fullview": "1.0.0"
       },
       "icon": "apps/id7_cockpit_plus/icon.png",
       "build": {
         "python": "vendor/cauliflowermossgrape-idrive7-apps/kit/tools/build.py",
-        "args": ["--app-root", ".", "--omit-sdk", "id7_cockpit_plus"],
+        "args": ["--app-root", ".", "--language", "zh-CN", "--omit-sdk", "id7_cockpit_plus"],
         "output": "dist/id7_cockpit_plus"
       }
     }

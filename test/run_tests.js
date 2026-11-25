@@ -709,7 +709,8 @@ function inBox(x, y, box) {
         rDefault.render(modelA, { enabled: true, gearDisplay: 'next_to_d' }, 5000);
         await wait(60);
 
-        assert.strictEqual(recorded.layers.filter((l) => l.target === 'panel').length, 8, 'default PHEV panel_only must activate 5 outer zones + hv_soc_gauge + right_widget + speed');
+        assert.strictEqual(recorded.layers.filter((l) => l.target === 'panel' && (!l.kind || l.kind === 'image')).length, 8, 'default PHEV panel_only must activate 5 outer zones + hv_soc_gauge + right_widget + speed');
+        assert.strictEqual(recorded.layers.some((l) => l.target === 'panel' && l.kind === 'effect' && l.z === 2), true, 'FullView bezel fade effect layer activates on panel');
         assert(rDefault.layerCount() <= 16);
         assert(rDefault.pixelBytesTotal() < 3.5 * 1024 * 1024);
 
@@ -3176,7 +3177,8 @@ function inBox(x, y, box) {
         assert.strictEqual(appSpec.id, 'id7_cockpit_plus');
         assert.strictEqual(appSpec.title, 'Cockpit+');
         assert.strictEqual(appSpec.loggingId, 'OA7C');
-        assert.strictEqual(appSpec.requires && appSpec.requires['cluster-render'], '0.4.0');
+        assert.strictEqual(appSpec.requires && appSpec.requires['cluster-render'], '0.8.14');
+        assert.strictEqual(appSpec.requires && appSpec.requires['waze-on-cluster'], '0.14.16');
         assert.strictEqual(appSpec.requires && appSpec.requires['cockpit-fullview'], '1.0.0');
         assert(!appSpec.npmFiles, 'jpeg_decoder.js must be bundled directly without npmFiles');
         assert(fs.existsSync(path.join(APP_DIR, 'jpeg_decoder.js')));

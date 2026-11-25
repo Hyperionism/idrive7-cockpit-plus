@@ -78,7 +78,7 @@ function findSourceId7Profile(wocDir) {
       };
     }
   }
-  return { path: null, text: FALLBACK_ID7_PROFILE };
+  return null;
 }
 
 function upsertIniKey(text, key, value, sectionName) {
@@ -198,10 +198,15 @@ function activate(opts) {
     };
   }
 
+  var src = findSourceId7Profile(wocDir);
+  if (!src) {
+    return {
+      status: 'Open-source waze-on-cluster active (no C++ pods to override)'
+    };
+  }
   var vehiclesDir = path.join(wocDir, 'vehicles');
   mkdirp(vehiclesDir);
 
-  var src = findSourceId7Profile(wocDir);
   var profilePath = path.join(vehiclesDir, PROFILE_NAME + '.conf');
   fs.writeFileSync(profilePath, buildCockpitProfileText(src.text), 'utf8');
 

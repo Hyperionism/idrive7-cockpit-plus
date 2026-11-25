@@ -1,10 +1,13 @@
 #!/usr/bin/env node
 /**
- * Build release packages (id7_cockpit_plus app + cockpit-fullview tool) and
- * generate official MGU Store Schema 2 `catalog.json` + `mgu-store.json`.
+ * Build Cockpit+ release packages (`cockpit-fullview` + `id7_cockpit_plus`),
+ * optionally merge upstream-built native MGU components (`cluster-render`,
+ * `waze-on-cluster`, `robertn_waze_cluster`, `mgu-render`) from an upstream
+ * catalog JSON (`--extra-catalog <path>`), and emit unified MGU Store Schema 2
+ * `catalog.json` + `mgu-store.json`.
  *
  * Usage:
- *   node release/build_catalog.js --repo <owner/repo> [--tag v0.9.3] [--dry-run]
+ *   node release/build_catalog.js --repo <owner/repo> [--tag v0.9.4] [--extra-catalog a.json,b.json] [--dry-run]
  */
 'use strict';
 
@@ -24,12 +27,18 @@ function parseArgs(argv) {
   const opts = {
     repo: process.env.GITHUB_REPOSITORY || 'Hyperionism/idrive7-cockpit-plus',
     tag: '',
+    language: 'zh-CN',
+    extraCatalogs: [],
     dryRun: false
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--repo' && argv[i + 1]) opts.repo = argv[++i];
     else if (a === '--tag' && argv[i + 1]) opts.tag = argv[++i];
+    else if (a === '--language' && argv[i + 1]) opts.language = argv[++i];
+    else if (a === '--extra-catalog' && argv[i + 1]) {
+      opts.extraCatalogs = opts.extraCatalogs.concat(argv[++i].split(',').map((s) => s.trim()).filter(Boolean));
+    }
     else if (a === '--dry-run') opts.dryRun = true;
   }
   return opts;
@@ -195,6 +204,52 @@ function buildToolArchive(py, outTgz) {
   return comp;
 }
 
+function loadExtraCatalogEntries(catalogPaths, baseReleaseUrl, distDir) {
+  const byId = new Map();
+  const extraApps = {};
+  for (const catPathRaw of catalogPaths) {
+    const catPath = path.resolve(catPathRaw);
+    const catDir = path.dirname(catPath);
+    const data = JSON.parse(fs.readFileSync(catPath, 'utf8'));
+    const list = Array.isArray(data.components) ? data.components : [];
+    for (const rawEntry of list) {
+      if (!rawEntry || !rawEntry.id || !rawEntry.artifact || !rawEntry.artifact.name) continue;
+      const entry = JSON.parse(JSON.stringify(rawEntry));
+      const srcArt = path.join(catDir, entry.artifact.name);
+      const dstArt = path.join(distDir, entry.artifact.name);
+      if (fs.existsSync(srcArt) && srcArt !== dstArt) {
+        fs.copyFileSync(srcArt, dstArt);
+      }
+      if (!fs.existsSync(dstArt)) {
+        throw new Error(`Extra catalog artifact missing: ${srcArt}`);
+      }
+      entry.artifact.size = fs.statSync(dstArt).size;
+      entry.artifact.sha256 = sha256File(dstArt);
+      entry.artifact.url = `${baseReleaseUrl}/${entry.artifact.name}`;
+      if (entry.icon) {
+        const srcIcon = path.join(catDir, entry.icon);
+        const dstIcon = path.join(distDir, entry.icon);
+        if (fs.existsSync(srcIcon) && srcIcon !== dstIcon) {
+          fs.copyFileSync(srcIcon, dstIcon);
+        }
+        if (fs.existsSync(dstIcon)) {
+          entry.iconSha256 = sha256File(dstIcon);
+        }
+      }
+      if (entry.kind === 'app') {
+        extraApps[entry.id] = {
+          title: entry.title,
+          description: entry.description,
+          icon: entry.icon,
+          iconSha256: entry.iconSha256
+        };
+      }
+      byId.set(entry.id, entry);
+    }
+  }
+  return { entries: Array.from(byId.values()), appsMeta: extraApps };
+}
+
 function main() {
   const opts = parseArgs(process.argv.slice(2));
   const appManifest = JSON.parse(fs.readFileSync(path.join(APP_DIR, 'app.json'), 'utf8'));
@@ -203,8 +258,8 @@ function main() {
 
   fs.mkdirSync(DIST_DIR, { recursive: true });
 
-  // 1. Build Cockpit+ OAP app tarball (--omit-sdk)
-  const buildArgs = [...py.args, BUILD_PY, '--app-root', ROOT, '--omit-sdk', appManifest.id];
+  // 1. Build Cockpit+ OAP app tarball (--omit-sdk) with Simplified Chinese UI by default
+  const buildArgs = [...py.args, BUILD_PY, '--app-root', ROOT, '--language', opts.language, '--omit-sdk', appManifest.id];
   const buildRes = childProcess.spawnSync(py.cmd, buildArgs, { cwd: ROOT, encoding: 'utf8' });
   if (buildRes.status !== 0) {
     throw new Error(`build.py failed:\n${buildRes.stdout || ''}\n${buildRes.stderr || ''}`);
@@ -239,51 +294,61 @@ function main() {
 
   const baseReleaseUrl = `https://github.com/${opts.repo}/releases/download/${tag}`;
 
-  // Official MGU Store Schema 2 catalog.json (components array)
+  // Merge any upstream-built native & control components cleanly
+  const mergedExtras = loadExtraCatalogEntries(opts.extraCatalogs, baseReleaseUrl, DIST_DIR);
+
+  const localComponents = [
+    {
+      id: toolManifest.id,
+      kind: 'tool',
+      title: toolManifest.title,
+      description: toolManifest.description,
+      author: toolManifest.author,
+      version: toolManifest.version,
+      artifact: {
+        name: toolTgzName,
+        size: toolTgzSize,
+        sha256: toolTgzSha,
+        url: `${baseReleaseUrl}/${toolTgzName}`
+      },
+      uninstallable: toolManifest.uninstallable !== false,
+      mguHmi: toolManifest.mguHmi || ['ID7']
+    },
+    {
+      id: appManifest.id,
+      kind: 'app',
+      title: appManifest.title,
+      description: appManifest.description,
+      author: appManifest.author,
+      version: appManifest.version,
+      artifact: {
+        name: appTgzName,
+        size: appTgzSize,
+        sha256: appTgzSha,
+        url: `${baseReleaseUrl}/${appTgzName}`
+      },
+      uninstallable: true,
+      mguHmi: appManifest.mguHmi || ['ID7'],
+      requires: appManifest.requires || {},
+      icon: iconName,
+      iconSha256: iconSha
+    }
+  ];
+
+  // Put tools first, then apps cleanly
+  const allComponents = mergedExtras.entries.concat(localComponents);
+  allComponents.sort((a, b) => {
+    if (a.kind !== b.kind) return a.kind === 'tool' ? -1 : 1;
+    return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+  });
+
   const catalog = {
     schema: 2,
-    components: [
-      {
-        id: toolManifest.id,
-        kind: 'tool',
-        title: toolManifest.title,
-        description: toolManifest.description,
-        author: toolManifest.author,
-        version: toolManifest.version,
-        artifact: {
-          name: toolTgzName,
-          size: toolTgzSize,
-          sha256: toolTgzSha,
-          url: `${baseReleaseUrl}/${toolTgzName}`
-        },
-        uninstallable: toolManifest.uninstallable !== false,
-        mguHmi: toolManifest.mguHmi || ['ID7']
-      },
-      {
-        id: appManifest.id,
-        kind: 'app',
-        title: appManifest.title,
-        description: appManifest.description,
-        author: appManifest.author,
-        version: appManifest.version,
-        artifact: {
-          name: appTgzName,
-          size: appTgzSize,
-          sha256: appTgzSha,
-          url: `${baseReleaseUrl}/${appTgzName}`
-        },
-        uninstallable: true,
-        mguHmi: appManifest.mguHmi || ['ID7'],
-        requires: appManifest.requires || {},
-        icon: iconName,
-        iconSha256: iconSha
-      }
-    ]
+    components: allComponents
   };
 
-  // MGU Store legacy/direct release sidecar metadata
   const mguStoreMeta = {
-    apps: {
+    apps: Object.assign({}, mergedExtras.appsMeta, {
       [appManifest.id]: {
         title: appManifest.title,
         description: appManifest.description,
@@ -291,7 +356,7 @@ function main() {
         icon: iconName,
         iconSha256: iconSha
       }
-    }
+    })
   };
 
   fs.writeFileSync(path.join(DIST_DIR, 'catalog.json'), JSON.stringify(catalog, null, 2) + '\n', 'utf8');
@@ -299,7 +364,7 @@ function main() {
 
   console.log(`[build_catalog] Built ${appTgzName} (${appTgzSize} B, ${appVerified.entryCount} files, sha256=${appTgzSha.slice(0, 12)}...)`);
   console.log(`[build_catalog] Built ${toolTgzName} (${toolTgzSize} B, sha256=${toolTgzSha.slice(0, 12)}...)`);
-  console.log(`[build_catalog] Schema 2 catalog.json & mgu-store.json written for ${opts.repo} @ ${tag}${opts.dryRun ? ' (dry-run)' : ''}`);
+  console.log(`[build_catalog] Schema 2 catalog.json (${allComponents.length} components) & mgu-store.json written for ${opts.repo} @ ${tag}${opts.dryRun ? ' (dry-run)' : ''}`);
 }
 
 if (require.main === module) {
@@ -310,5 +375,6 @@ module.exports = {
   readTarEntries,
   verifyPackage,
   verifyToolPackage,
-  buildToolArchive
+  buildToolArchive,
+  loadExtraCatalogEntries
 };

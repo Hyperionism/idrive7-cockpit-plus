@@ -11,6 +11,7 @@
 
 const mgu = require('./kit/mgu');
 const fontsMod = require('./kit/fonts');
+const { t, getLanguage } = require('./kit/i18n');
 const { installStockBmwFonts, getFontStatus } = require('./bmw_font');
 const { SignalHub } = require('./signals');
 const { EfficiencyTracker } = require('./efficiency');
@@ -19,7 +20,11 @@ const { OverlayRenderer } = require('./overlay_renderer');
 const { formatTemp, formatSpeed } = require('./units');
 
 function asciiOnly(str) {
-    return String(str || '').replace(/\u00B0/g, ' ').replace(/[^\x20-\x7e]/g, '');
+    const out = t(String(str == null ? '' : str));
+    if (getLanguage() === 'en') {
+        return out.replace(/\u00B0/g, ' ').replace(/[^\x20-\x7e]/g, '');
+    }
+    return out.replace(/[\x00-\x1f\x7f]/g, '');
 }
 
 function fmtTempAscii(tempC, units) {

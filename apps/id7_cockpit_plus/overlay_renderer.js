@@ -28,6 +28,7 @@ const path = require('path');
 const { ClusterRender, DEFAULT_PATH } = require('./cluster_render_client');
 const { Canvas } = require('./kit/canvas');
 const fontsMod = require('./kit/fonts');
+const { t: tr } = require('./kit/i18n');
 const { installStockBmwFonts, getFontSource } = require('./bmw_font');
 const {
     formatTemp, formatSpeed, formatEvEff, formatFuelEff, formatPress, formatPowerKw,
@@ -143,6 +144,27 @@ const PANEL_ALL_LAYERS = [
     'hv_soc_gauge', 'right_widget', 'speed', 'lane_guidance', 'guidance_turn_card', 'eta_pill',
 ];
 const MAP_LAYER_NAMES = ['map_speed', 'map_left', 'map_right'];
+const BEZEL_MASK_FS = [
+    '#version 100',
+    'precision mediump float;',
+    'varying vec2 v_uv;',
+    'void main() {',
+    '    float x = v_uv.x * 1632.0;',
+    '    float y = v_uv.y * 720.0;',
+    '    float uxL = clamp(1.0 - x / 374.0, 0.0, 1.0);',
+    '    float uxR = clamp(1.0 - (1632.0 - x) / 374.0, 0.0, 1.0);',
+    '    float vyT = clamp(1.0 - y / 354.0, 0.0, 1.0);',
+    '    float bxL = clamp(1.0 - x / 408.0, 0.0, 1.0);',
+    '    float bxR = clamp(1.0 - (1632.0 - x) / 408.0, 0.0, 1.0);',
+    '    float vyB = clamp(1.0 - (720.0 - y) / 168.0, 0.0, 1.0);',
+    '    float eTop = max(uxL * uxL + vyT * vyT, uxR * uxR + vyT * vyT);',
+    '    float eBot = max(bxL * bxL + vyB * vyB, bxR * bxR + vyB * vyB);',
+    '    float cornerA = smoothstep(0.92, 1.12, max(eTop, eBot));',
+    '    float botFade = 1.0 - smoothstep(0.0, 20.0, 720.0 - y);',
+    '    float a = clamp(max(cornerA, botFade * 0.85), 0.0, 1.0);',
+    '    gl_FragColor = vec4(0.0, 0.0, 0.0, a);',
+    '}',
+].join('\n');
 
 const COL = {
     clear: [0, 0, 0, 0],
@@ -552,7 +574,61 @@ class OverlayRenderer {
         this._alertBcBase = 0;
         this._alertDismissed = false;
         this._iceChgState = {};
+        this.hostConfigKey = '';
+        this.hostModeActive = 'off';
+        this.bezelMaskRef = null;
+        this.bezelMaskVisible = false;
         this.lastSummary = {};
+    }
+
+    _syncMapHost(mode, maskOn) {
+        const cleanMode = (mode === 'fullview' || mode === 'center') ? mode : 'off';
+        const showMask = cleanMode === 'fullview' && Boolean(maskOn);
+        this.hostModeActive = cleanMode;
+        if (!this.cr) return;
+
+        const key = cleanMode + '|' + (showMask ? '1' : '0');
+        if (key === this.hostConfigKey) return;
+        this.hostConfigKey = key;
+
+        if (cleanMode === 'fullview' || cleanMode === 'center') {
+            if (typeof this.cr.host === 'function') {
+                const rect = cleanMode === 'fullview'
+                    ? { target: 'map', x: 144, y: 0, w: 1632, h: 720, shown: 1 }
+                    : { target: 'map', x: 416, y: 120, w: 1088, h: 480, shown: 1 };
+                this.cr.host('panel', rect);
+            }
+            if (showMask && typeof this.cr.effect === 'function') {
+                if (!this.bezelMaskRef) {
+                    this.bezelMaskRef = this.cr.effect({
+                        target: 'panel',
+                        klass: 'overlay',
+                        z: 2,
+                        x: 144,
+                        y: 0,
+                        w: 1632,
+                        h: 720,
+                        visible: true,
+                        fs: BEZEL_MASK_FS,
+                    });
+                    this.bezelMaskVisible = true;
+                } else if (!this.bezelMaskVisible && typeof this.cr.set === 'function') {
+                    this.cr.set(this.bezelMaskRef, { visible: true });
+                    this.bezelMaskVisible = true;
+                }
+            } else if (this.bezelMaskRef && this.bezelMaskVisible && typeof this.cr.set === 'function') {
+                this.cr.set(this.bezelMaskRef, { visible: false });
+                this.bezelMaskVisible = false;
+            }
+        } else {
+            if (typeof this.cr.unhost === 'function') {
+                this.cr.unhost('panel', 'map');
+            }
+            if (this.bezelMaskRef && this.bezelMaskVisible && typeof this.cr.set === 'function') {
+                this.cr.set(this.bezelMaskRef, { visible: false });
+                this.bezelMaskVisible = false;
+            }
+        }
     }
 
     canUsePanel() {
@@ -663,6 +739,8 @@ class OverlayRenderer {
             this.ready = true;
             this.connected = true;
             this.targets = cr.targets || '';
+            this.hostConfigKey = '';
+            this.bezelMaskVisible = false;
             const keys = Object.keys(this.layers);
             for (let i = 0; i < keys.length; i++) {
                 this.layers[keys[i]].prevBuf = null;
@@ -717,6 +795,9 @@ class OverlayRenderer {
                 showMapOverlay = !canPanel && s.fallbackMapBar !== false && wazeOn;
             }
         }
+        const wantHostMode = panelAllowed ? (s.mapHostMode || 'fullview') : 'off';
+        const wantBezelMask = s.mapBezelMask !== false;
+        this._syncMapHost(wantHostMode, wantBezelMask);
 
         // HUD navigation re-rendering & intersection mini-map auto-yield:
         const hudNavMode = s.hudNavMode || 'own_nav_minimap';
@@ -1460,7 +1541,7 @@ class OverlayRenderer {
         const pal = cabinHvacPalette(hvacMode);
         const cx = Math.round(cv.w / 2);
 
-        drawTextOutline(cv, 'CABIN', cx, 17, 11, '#9ab0c9', { font: 'bold', align: 'center' });
+        drawTextOutline(cv, tr('CABIN'), cx, 17, 11, '#9ab0c9', { font: 'bold', align: 'center' });
 
         let numSz = 20;
         let unitSz = 14;
@@ -1528,16 +1609,16 @@ class OverlayRenderer {
         const isColdOil = typeof t.oilTempC === 'number' && t.oilTempC < coldOilC;
         const isHotOil = typeof t.oilTempC === 'number' && t.oilTempC >= 118;
         const colOil = isColdOil ? COL.icyBlue : (isHotOil ? COL.amber : COL.white);
-        drawTextOutline(cv, 'OIL ' + oil.text, 3, 24, 22, colOil, { font: 'bold', align: 'left' });
+        drawTextOutline(cv, tr('OIL') + ' ' + oil.text, 3, 24, 22, colOil, { font: 'bold', align: 'left' });
 
         if (mode === 'oil_gbx') {
             const gbx = formatTemp(t.gearboxOilC, units);
             const colGbx = (typeof t.gearboxOilC === 'number' && t.gearboxOilC >= 105) ? COL.amber : COL.softBlue;
-            drawTextOutline(cv, 'GBX ' + gbx.text, 3, 53, 21, colGbx, { font: 'bold', align: 'left' });
+            drawTextOutline(cv, tr('GBX') + ' ' + gbx.text, 3, 53, 21, colGbx, { font: 'bold', align: 'left' });
         } else {
             const cool = formatTemp(t.coolantTempC, units);
             const colCool = (typeof t.coolantTempC === 'number' && t.coolantTempC >= 108) ? COL.red : COL.softBlue;
-            drawTextOutline(cv, 'CL ' + cool.text, 3, 53, 22, colCool, { font: 'bold', align: 'left' });
+            drawTextOutline(cv, tr('CL') + ' ' + cool.text, 3, 53, 22, colCool, { font: 'bold', align: 'left' });
         }
     }
 
@@ -1588,8 +1669,8 @@ class OverlayRenderer {
         }
 
         if (!hasMedia) {
-            drawTextClean(cv, 'No Media Playing', fgCx, 338, 30, COL.mediaSub, { font: 'bold', align: 'center' });
-            drawTextClean(cv, 'Press BC for Trip Info', fgCx, 376, 21, COL.tagGray, { font: 'label', align: 'center' });
+            drawTextClean(cv, tr('No Media Playing'), fgCx, 338, 30, COL.mediaSub, { font: 'bold', align: 'center' });
+            drawTextClean(cv, tr('Press BC for Trip Info'), fgCx, 376, 21, COL.tagGray, { font: 'label', align: 'center' });
             return;
         }
 
@@ -1637,22 +1718,22 @@ class OverlayRenderer {
         const dUnit = isMi ? ' mi' : ' km';
         const dScale = isMi ? 0.621371 : 1;
 
-        drawTextOutline(cv, 'TRIP & POWERTRAIN', midX, 122, 17, COL.tagGray, { font: 'bold', align: 'center' });
+        drawTextOutline(cv, tr('TRIP & POWERTRAIN'), midX, 122, 17, COL.tagGray, { font: 'bold', align: 'center' });
         cv.fillRect(leftX, 134, rightX - leftX, 2, COL.divider);
 
         if (profile && profile.vehicleType === 'phev') {
             const evStr = (typeof t.erangeKm === 'number' && isFinite(t.erangeKm))
                 ? (Math.round(t.erangeKm * dScale) + dUnit) : ('--' + dUnit);
-            drawTextOutline(cv, 'EV RANGE', leftX, 168, 15, COL.tagBlue, { font: 'bold', align: 'left' });
+            drawTextOutline(cv, tr('EV RANGE'), leftX, 168, 15, COL.tagBlue, { font: 'bold', align: 'left' });
             drawTextOutline(cv, evStr, leftX, 202, 28, COL.cyan, { font: 'num', align: 'left' });
         } else {
-            drawTextOutline(cv, 'EFFICIENCY', leftX, 168, 15, COL.tagBlue, { font: 'bold', align: 'left' });
+            drawTextOutline(cv, tr('EFFICIENCY'), leftX, 168, 15, COL.tagBlue, { font: 'bold', align: 'left' });
             drawTextOutline(cv, hero.value + ' ' + hero.unit, leftX, 202, 24, COL.white, { font: 'bold', align: 'left' });
         }
 
         const fuelStr = (typeof t.frangeKm === 'number' && isFinite(t.frangeKm))
             ? (Math.round(t.frangeKm * dScale) + dUnit) : ('--' + dUnit);
-        drawTextOutline(cv, 'FUEL RANGE', rightX, 168, 15, COL.tagBlue, { font: 'bold', align: 'right' });
+        drawTextOutline(cv, tr('FUEL RANGE'), rightX, 168, 15, COL.tagBlue, { font: 'bold', align: 'right' });
         drawTextOutline(cv, fuelStr, rightX, 202, 28, COL.white, { font: 'num', align: 'right' });
 
         let tripStr = '--';
@@ -1661,21 +1742,21 @@ class OverlayRenderer {
         } else if (typeof t.tripMinutes === 'number' && t.tripMinutes >= 0) {
             tripStr = Math.floor(t.tripMinutes / 60) + 'h ' + (t.tripMinutes % 60) + 'm';
         }
-        drawTextOutline(cv, 'TRIP DIST', leftX, 254, 15, COL.tagBlue, { font: 'bold', align: 'left' });
+        drawTextOutline(cv, tr('TRIP DIST'), leftX, 254, 15, COL.tagBlue, { font: 'bold', align: 'left' });
         drawTextOutline(cv, tripStr, leftX, 288, 28, COL.white, { font: 'num', align: 'left' });
 
         const gbxStr = formatTemp(t.gearboxOilC, units).text;
         const gbxCol = (typeof t.gearboxOilC === 'number' && t.gearboxOilC >= 105) ? COL.amber : COL.white;
-        drawTextOutline(cv, 'GEARBOX', rightX, 254, 15, COL.tagBlue, { font: 'bold', align: 'right' });
+        drawTextOutline(cv, tr('GEARBOX'), rightX, 254, 15, COL.tagBlue, { font: 'bold', align: 'right' });
         drawTextOutline(cv, gbxStr, rightX, 288, 28, gbxCol, { font: 'num', align: 'right' });
 
         if (profile && profile.vehicleType === 'phev') {
             const btStr = formatTemp(t.battTempC, units).text;
-            drawTextOutline(cv, 'HV BATT', leftX, 340, 15, COL.tagBlue, { font: 'bold', align: 'left' });
+            drawTextOutline(cv, tr('HV BATT'), leftX, 340, 15, COL.tagBlue, { font: 'bold', align: 'left' });
             drawTextOutline(cv, btStr, leftX, 374, 28, COL.white, { font: 'num', align: 'left' });
         } else {
             const iatStr = formatTemp(t.iatC, units).text;
-            drawTextOutline(cv, 'INTAKE', leftX, 340, 15, COL.tagBlue, { font: 'bold', align: 'left' });
+            drawTextOutline(cv, tr('INTAKE'), leftX, 340, 15, COL.tagBlue, { font: 'bold', align: 'left' });
             drawTextOutline(cv, iatStr, leftX, 374, 28, COL.white, { font: 'num', align: 'left' });
         }
 
@@ -1691,7 +1772,7 @@ class OverlayRenderer {
         }
         const v12Low = (hasV12 && t.v12 < 12.1) || (hasSoc12 && t.soc12 < 55);
         const v12Col = (hasSoc12 && t.soc12 < 40) ? COL.red : (v12Low ? COL.amber : COL.white);
-        drawTextOutline(cv, '12V AUX', rightX, 340, 15, COL.tagBlue, { font: 'bold', align: 'right' });
+        drawTextOutline(cv, tr('12V AUX'), rightX, 340, 15, COL.tagBlue, { font: 'bold', align: 'right' });
         drawTextOutline(cv, v12Str, rightX, 374, (hasV12 && hasSoc12) ? 23 : 28, v12Col, { font: (hasV12 && hasSoc12) ? 'bold' : 'num', align: 'right' });
     }
 
@@ -1795,13 +1876,13 @@ class OverlayRenderer {
         // 1. NORMAL 4-WHEEL TPMS VIEW (no active alert)
         if (!alertObj) {
             paintRadialGlow(cv, midX, 244, 156, [56, 178, 246], 24);
-            drawTextOutline(cv, 'TIRE PRESSURE & TEMP', midX, 114, 18, COL.tagGray, { font: 'bold', align: 'center' });
+            drawTextOutline(cv, tr('TIRE PRESSURE & TEMP'), midX, 114, 18, COL.tagGray, { font: 'bold', align: 'center' });
             cv.fillRect(bannerX0 + 8, 128, bannerW - 16, 2, COL.divider);
 
             const tpMap = (t && t.tpms) || {};
             const anyLive = drawTpmsFourWheelBlock(166, 168, 276, tpMap);
             if (!anyLive) {
-                drawTextOutline(cv, 'Updates once rolling', midX, 396, 17, COL.tagGray, { font: 'label', align: 'center' });
+                drawTextOutline(cv, tr('Updates once rolling'), midX, 396, 17, COL.tagGray, { font: 'label', align: 'center' });
             }
             return;
         }
@@ -1817,7 +1898,8 @@ class OverlayRenderer {
         cv.roundRect(bannerX0, 92, bannerW, 40, 8, bannerFill);
         cv.strokeRoundRect(bannerX0, 92, bannerW, 40, 8, 2, bannerRim);
 
-        const bannerTitle = '!  ' + String(alertObj.title || alertObj.hudText || alertObj.label || 'VEHICLE ALERT').toUpperCase();
+        const rawTitle = String(alertObj.title || alertObj.hudText || alertObj.label || 'VEHICLE ALERT');
+        const bannerTitle = '!  ' + tr(rawTitle).toUpperCase();
         const bFit = fitTextLine(cv, bannerTitle, bannerW - 20, [20, 18, 16], 'bold');
         drawTextOutline(cv, bFit.text, midX, 120, bFit.size, isRed ? '#ffd6d6' : '#fff0c7', { font: 'bold', align: 'center' });
 
@@ -1825,45 +1907,45 @@ class OverlayRenderer {
             const tpMap = alertObj.previewTpms || (t && t.tpms) || {};
             drawTpmsFourWheelBlock(154, 156, 260, tpMap);
             if (alertObj.detail) {
-                const dFit = fitTextLine(cv, alertObj.detail, 336, [21, 19, 17], 'bold');
+                const dFit = fitTextLine(cv, tr(alertObj.detail), 336, [21, 19, 17], 'bold');
                 drawTextOutline(cv, dFit.text, midX, 366, dFit.size, aCol, { font: 'bold', align: 'center' });
             }
-            drawTextOutline(cv, 'Press BC to dismiss', midX, 398, 17, COL.tagGray, { font: 'label', align: 'center' });
+            drawTextOutline(cv, tr('Press BC to dismiss'), midX, 398, 17, COL.tagGray, { font: 'label', align: 'center' });
             return;
         }
 
         // Non-TPMS Detailed Alert (Gearbox Oil Hot/Critical, 12V Battery Low/Critical)
-        const heroTxt = alertObj.heroVal || alertObj.label || '--';
+        const heroTxt = alertObj.heroVal || tr(alertObj.label) || '--';
         drawTextOutline(cv, heroTxt, midX, 226, 72, aCol, { font: 'num', align: 'center' });
 
         if (alertObj.detail) {
-            const dFit = fitTextLine(cv, alertObj.detail, 336, [22, 20, 18], 'bold');
+            const dFit = fitTextLine(cv, tr(alertObj.detail), 336, [22, 20, 18], 'bold');
             drawTextOutline(cv, dFit.text, midX, 272, dFit.size, COL.white, { font: 'bold', align: 'center' });
         }
         if (alertObj.advice) {
-            const advFit = fitTextLine(cv, alertObj.advice, 336, [20, 18, 16], 'label');
+            const advFit = fitTextLine(cv, tr(alertObj.advice), 336, [20, 18, 16], 'label');
             drawTextOutline(cv, advFit.text, midX, 304, advFit.size, COL.softBlue, { font: 'label', align: 'center' });
         }
 
         cv.fillRect(leftX + 12, 324, rightX - leftX - 24, 1, COL.divider);
 
         if (alertObj.id === 'gbox') {
-            drawTextOutline(cv, 'ENGINE OIL', leftX + 8, 348, 14, COL.tagBlue, { font: 'bold', align: 'left' });
+            drawTextOutline(cv, tr('ENGINE OIL'), leftX + 8, 348, 14, COL.tagBlue, { font: 'bold', align: 'left' });
             drawTextOutline(cv, formatTemp(t && t.oilTempC, units).text, leftX + 8, 378, 25, COL.white, { font: 'num', align: 'left' });
-            drawTextOutline(cv, 'COOLANT', rightX - 8, 348, 14, COL.tagBlue, { font: 'bold', align: 'right' });
+            drawTextOutline(cv, tr('COOLANT'), rightX - 8, 348, 14, COL.tagBlue, { font: 'bold', align: 'right' });
             drawTextOutline(cv, formatTemp(t && t.coolantTempC, units).text, rightX - 8, 378, 25, COL.white, { font: 'num', align: 'right' });
         } else {
             const vTxt = (t && typeof t.v12 === 'number' && isFinite(t.v12)) ? (t.v12.toFixed(1) + ' V')
                 : (alertObj.id === 'v12' && alertObj.heroVal ? alertObj.heroVal : '-- V');
             const sTxt = (t && typeof t.soc12 === 'number' && isFinite(t.soc12)) ? (Math.round(t.soc12) + '%')
                 : (alertObj.id === 'soc12' && alertObj.heroVal ? alertObj.heroVal : '--%');
-            drawTextOutline(cv, '12V VOLTS', leftX + 8, 348, 14, COL.tagBlue, { font: 'bold', align: 'left' });
+            drawTextOutline(cv, tr('12V VOLTS'), leftX + 8, 348, 14, COL.tagBlue, { font: 'bold', align: 'left' });
             drawTextOutline(cv, vTxt, leftX + 8, 378, 25, COL.white, { font: 'num', align: 'left' });
-            drawTextOutline(cv, '12V CHARGE', rightX - 8, 348, 14, COL.tagBlue, { font: 'bold', align: 'right' });
+            drawTextOutline(cv, tr('12V CHARGE'), rightX - 8, 348, 14, COL.tagBlue, { font: 'bold', align: 'right' });
             drawTextOutline(cv, sTxt, rightX - 8, 378, 25, COL.white, { font: 'num', align: 'right' });
         }
 
-        drawTextOutline(cv, 'Press BC to dismiss', midX, 408, 17, COL.tagGray, { font: 'label', align: 'center' });
+        drawTextOutline(cv, tr('Press BC to dismiss'), midX, 408, 17, COL.tagGray, { font: 'label', align: 'center' });
     }
 
     /**
@@ -1882,15 +1964,15 @@ class OverlayRenderer {
 
         paintRadialGlow(cv, midX, 232, 172, [56, 178, 246], 38);
         const hdr = c.preconActive
-            ? 'CHARGING  -  PRECOND'
-            : (c.plugLocked ? 'CHARGING  -  LOCKED' : 'CHARGING');
+            ? tr('CHARGING  -  PRECOND')
+            : (c.plugLocked ? tr('CHARGING  -  LOCKED') : tr('CHARGING'));
         drawTextOutline(cv, hdr, midX, 108, 20, COL.cyan, { font: 'bold', align: 'center' });
         cv.fillRect(62, 122, 288, 2, COL.divider);
 
         const cards = [];
         if (t && typeof t.hvVolts === 'number' && isFinite(t.hvVolts)) {
             cards.push({
-                label: 'HV PACK',
+                label: tr('HV PACK'),
                 val: Math.round(t.hvVolts) + ' V',
                 col: COL.white,
             });
@@ -1898,23 +1980,23 @@ class OverlayRenderer {
         if (t && typeof t.battTempC === 'number' && isFinite(t.battTempC)) {
             const btCol = t.battTempC < 10 ? COL.icyBlue : (t.battTempC >= 42 ? COL.amber : COL.white);
             cards.push({
-                label: 'BATT TEMP',
+                label: tr('BATT TEMP'),
                 val: formatTemp(t.battTempC, units).text,
                 col: btCol,
             });
         }
 
         const finStr = c.finishTimeText || '--:--';
-        const remLabel = c.remainText ? (c.remainText + ' remaining') : 'Plugged in';
+        const remLabel = c.remainText ? tr(c.remainText + ' remaining') : tr('Plugged in');
 
         if (!cards.length) {
-            drawTextOutline(cv, 'EST. FINISH', midX, 178, 20, COL.tagGray, { font: 'bold', align: 'center' });
+            drawTextOutline(cv, tr('EST. FINISH'), midX, 178, 20, COL.tagGray, { font: 'bold', align: 'center' });
             drawTextOutline(cv, finStr, midX, 280, 104, COL.white, { font: 'num', align: 'center' });
             drawTextOutline(cv, remLabel, midX, 334, 36, COL.icyBlue, { font: 'bold', align: 'center' });
             return;
         }
 
-        drawTextOutline(cv, 'EST. FINISH', midX, 156, 18, COL.tagGray, { font: 'bold', align: 'center' });
+        drawTextOutline(cv, tr('EST. FINISH'), midX, 156, 18, COL.tagGray, { font: 'bold', align: 'center' });
         drawTextOutline(cv, finStr, midX, 248, 92, COL.white, { font: 'num', align: 'center' });
         drawTextOutline(cv, remLabel, midX, 294, 32, COL.icyBlue, { font: 'bold', align: 'center' });
 
@@ -2341,6 +2423,10 @@ class OverlayRenderer {
         }
         this.connected = false;
         this.ready = false;
+        this.hostConfigKey = '';
+        this.hostModeActive = 'off';
+        this.bezelMaskRef = null;
+        this.bezelMaskVisible = false;
         this.lastHudNavKey = '';
         this.lastHudRoadKey = '';
         this.lastRightWidgetKey = '';

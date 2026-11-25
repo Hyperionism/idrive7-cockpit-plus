@@ -18,7 +18,9 @@ const {
   activate,
   deactivate
 } = require(path.join(ROOT, 'tools', 'cockpit-fullview', 'files', 'cockpit_fullview.js'));
-const { readTarEntries, verifyToolPackage } = require(path.join(ROOT, 'release', 'build_catalog.js'));
+const { readTarEntries, verifyToolPackage, loadExtraCatalogEntries } = require(path.join(ROOT, 'release', 'build_catalog.js'));
+const { patchIdriveApps, patchMguStore } = require(path.join(ROOT, 'native', 'fullview-patch.js'));
+const { EventEmitter } = require('events');
 
 const SAMPLE_ID7_CONF = [
   '# FullView ID7 profile',
@@ -105,7 +107,8 @@ function testActivateNoOpWhenWazeAbsent() {
 
 function testAppRequiresAndSchema2Catalog() {
   const appJson = JSON.parse(fs.readFileSync(path.join(ROOT, 'apps', 'id7_cockpit_plus', 'app.json'), 'utf8'));
-  assert.strictEqual(appJson.requires['cluster-render'], '0.4.0');
+  assert.strictEqual(appJson.requires['cluster-render'], '0.8.14');
+  assert.strictEqual(appJson.requires['waze-on-cluster'], '0.14.16');
   assert.strictEqual(appJson.requires['cockpit-fullview'], '1.0.0');
 
   const dryRes = childProcess.execFileSync(
@@ -137,12 +140,160 @@ function testAppRequiresAndSchema2Catalog() {
   assert.ok(mguStoreMeta.apps && mguStoreMeta.apps.id7_cockpit_plus);
 }
 
+function testFullviewUpstreamPatcherAndExtraCatalog() {
+  const tmp = mkTempDir();
+  const idriveRoot = path.join(tmp, 'idrive-apps');
+  const crDir = path.join(idriveRoot, 'native', 'cluster-render');
+  const wocDir = path.join(idriveRoot, 'native', 'waze-on-cluster');
+  const wocAppDir = path.join(idriveRoot, 'apps', 'robertn_waze_cluster');
+  fs.mkdirSync(path.join(crDir, 'kit'), { recursive: true });
+  fs.mkdirSync(path.join(wocDir, 'patch'), { recursive: true });
+  fs.mkdirSync(wocAppDir, { recursive: true });
+
+  fs.writeFileSync(path.join(crDir, 'kit', 'map_geometry.h'), 'constexpr uint32_t kMapAreaWidth = 1088;\nconstexpr uint32_t kMapAreaHeight = 480;\n', 'utf8');
+  fs.writeFileSync(path.join(crDir, 'kit', 'map_geometry.cpp'), 'if (tex_w > kMapAreaWidth || tex_h > kMapAreaHeight)\n        return "texture larger than the 1088x480 map area";\n', 'utf8');
+  fs.writeFileSync(path.join(crDir, 'component.json'), JSON.stringify({ id: 'cluster-render', kind: 'tool', version: '0.8.13' }), 'utf8');
+  fs.writeFileSync(path.join(wocDir, 'waze-on-cluster.conf'), 'tex_size = 1088x480\nhosted_vpp_scale = 0\n', 'utf8');
+  fs.writeFileSync(
+    path.join(wocDir, 'patch', 'patchd.js'),
+    "function planArgs(panel, mode, unproven) {\n    var args = ['--panel', panel, '--coding', CODING].concat(unproven ? ['--unproven'] : []);\n    return args;\n}\n",
+    'utf8'
+  );
+  fs.writeFileSync(path.join(wocDir, 'component.json'), JSON.stringify({ id: 'waze-on-cluster', kind: 'tool', version: '0.14.15', requires: { 'cluster-render': '0.5.3' } }), 'utf8');
+  fs.writeFileSync(path.join(wocAppDir, 'release.json'), JSON.stringify({ requires: { 'waze-on-cluster': '0.14.2' } }), 'utf8');
+
+  const res = patchIdriveApps(idriveRoot);
+  assert.strictEqual(res.clusterRenderVersion, '0.8.14');
+  assert.strictEqual(res.wazeOnClusterVersion, '0.14.16');
+  assert.ok(fs.readFileSync(path.join(crDir, 'kit', 'map_geometry.h'), 'utf8').includes('kMaxMapTexWidth = 1632'));
+  assert.ok(fs.readFileSync(path.join(crDir, 'kit', 'map_geometry.cpp'), 'utf8').includes('tex_h > kMaxMapTexHeight'));
+  assert.ok(/^\s*tex_size\s*=\s*1632x720\s*$/m.test(fs.readFileSync(path.join(wocDir, 'waze-on-cluster.conf'), 'utf8')));
+  assert.ok(/^\s*hosted_vpp_scale\s*=\s*1\s*$/m.test(fs.readFileSync(path.join(wocDir, 'waze-on-cluster.conf'), 'utf8')));
+  assert.ok(fs.readFileSync(path.join(wocDir, 'patch', 'patchd.js'), 'utf8').includes('cockpitFullviewResArgs'));
+
+  const mguRoot = path.join(tmp, 'mgu-store');
+  fs.mkdirSync(path.join(mguRoot, 'native', 'mgu-render'), { recursive: true });
+  fs.writeFileSync(path.join(mguRoot, 'native', 'mgu-render', 'component.json'), JSON.stringify({ id: 'mgu-render', kind: 'tool', version: '0.6.26' }), 'utf8');
+  const mguRes = patchMguStore(mguRoot);
+  assert.strictEqual(mguRes.mguRenderVersion, '0.6.26');
+
+  // Verify loadExtraCatalogEntries merges upstream-built tool & app artifacts cleanly
+  const upDir = path.join(tmp, 'upstream-out');
+  const distTmp = path.join(tmp, 'dist-out');
+  fs.mkdirSync(upDir, { recursive: true });
+  fs.mkdirSync(distTmp, { recursive: true });
+  fs.writeFileSync(path.join(upDir, 'cluster-render@0.8.14.tgz'), 'cr-tgz');
+  fs.writeFileSync(path.join(upDir, 'extra.json'), JSON.stringify({
+    components: [{
+      id: 'cluster-render',
+      kind: 'tool',
+      title: 'Cluster renderer',
+      description: 'FullView renderer',
+      version: '0.8.14',
+      artifact: { name: 'cluster-render@0.8.14.tgz' },
+      mguHmi: ['ID7']
+    }]
+  }));
+  const merged = loadExtraCatalogEntries([path.join(upDir, 'extra.json')], 'https://github.com/Hyperionism/idrive7-cockpit-plus/releases/download/v0.9.4', distTmp);
+  assert.strictEqual(merged.entries.length, 1);
+  assert.strictEqual(merged.entries[0].artifact.url, 'https://github.com/Hyperionism/idrive7-cockpit-plus/releases/download/v0.9.4/cluster-render@0.8.14.tgz');
+  assert.strictEqual(fs.existsSync(path.join(distTmp, 'cluster-render@0.8.14.tgz')), true);
+
+  fs.rmSync(tmp, { recursive: true, force: true });
+}
+
+function testOverlayRendererFullviewMapHost() {
+  const builtJsDir = path.join(ROOT, 'dist', 'id7_cockpit_plus', 'source', 'javascript');
+  assert.ok(fs.existsSync(path.join(builtJsDir, 'overlay_renderer.js')), 'run build.py --stub-sdk before fullview_companion_test.js');
+  const { OverlayRenderer } = require(path.join(builtJsDir, 'overlay_renderer.js'));
+  const { resolveUnits } = require(path.join(builtJsDir, 'units.js'));
+
+  const calls = { hosts: [], unhosts: [], effects: [], sets: [] };
+  class StubCR extends EventEmitter {
+    constructor() { super(); this._next = 1; this.targets = 'map:1088x480,panel:1920x720,hud:800x480'; }
+    connect() { process.nextTick(() => this.emit('ready')); }
+    close() {}
+    image() { return this._next++; }
+    effect(opts) { const ref = this._next++; calls.effects.push(Object.assign({ ref }, opts)); return ref; }
+    pixels() { return true; }
+    set(ref, opts) { calls.sets.push({ ref, opts }); }
+    host(into, opts) { calls.hosts.push({ into, opts }); }
+    unhost(into, target) { calls.unhosts.push({ into, target }); }
+  }
+
+  const r = new OverlayRenderer({ ClusterRender: StubCR, allowPanel: true });
+  r.connect();
+  const units = resolveUnits({ unitSystem: 'metric' }, {});
+  const profile = { kind: 'ice', isPhev: false, isCold: false };
+  const model = { units, profile, telemetry: { speedKmh: 62, gear: 3 }, efficiency: {} };
+
+  r.render(model, { enabled: true, clusterSlotMode: 'panel_only', mapHostMode: 'fullview', mapBezelMask: true }, 1000);
+  assert.strictEqual(calls.hosts.length, 1);
+  assert.strictEqual(calls.hosts[0].into, 'panel');
+  assert.deepStrictEqual(calls.hosts[0].opts, { target: 'map', x: 144, y: 0, w: 1632, h: 720, shown: 1 });
+  assert.strictEqual(calls.effects.length, 1);
+  assert.strictEqual(calls.effects[0].z, 2);
+  assert.strictEqual(calls.effects[0].w, 1632);
+
+  r.render(model, { enabled: true, clusterSlotMode: 'panel_only', mapHostMode: 'center', mapBezelMask: true }, 1100);
+  assert.strictEqual(calls.hosts.length, 2);
+  assert.deepStrictEqual(calls.hosts[1].opts, { target: 'map', x: 416, y: 120, w: 1088, h: 480, shown: 1 });
+  assert.ok(calls.sets.some((s) => s.ref === calls.effects[0].ref && s.opts.visible === false));
+
+  r.render(model, { enabled: true, clusterSlotMode: 'panel_only', mapHostMode: 'off' }, 1200);
+  assert.deepStrictEqual(calls.unhosts, [{ into: 'panel', target: 'map' }]);
+  r.close();
+}
+
+function testSimplifiedChineseLocaleAndPackage() {
+  // After testAppRequiresAndSchema2Catalog ran build_catalog.js (default --language zh-CN),
+  // inspect the built package tarball & staged files for genuine zh-CN localization.
+  const builtLocalePath = path.join(ROOT, 'dist', 'id7_cockpit_plus', 'source', 'javascript', 'kit', 'locale.json');
+  assert.ok(fs.existsSync(builtLocalePath), 'zh-CN release build must emit kit/locale.json');
+  const builtLocale = JSON.parse(fs.readFileSync(builtLocalePath, 'utf8'));
+  assert.strictEqual(builtLocale.language, 'zh-CN');
+  assert.strictEqual(builtLocale.strings['Full-screen CarPlay map host'], '全屏 CarPlay 地图托管模式');
+  assert.strictEqual(builtLocale.strings['TIRE PRESSURE & TEMP'], '胎压与胎温');
+
+  const appTgz = path.join(ROOT, 'dist', 'id7_cockpit_plus@0.9.4.tgz');
+  const entries = readTarEntries(appTgz);
+  const pkgJson = JSON.parse(entries.get('package/package.json').toString('utf8'));
+  assert.strictEqual(pkgJson.version, '0.9.4', 'zh-CN package must preserve clean SemVer');
+
+  const zhBundleEntry = entries.get('package/rhmiData/variantGroups/Common/texts/zh_CN.json');
+  assert.ok(zhBundleEntry, 'zh-CN package must include rhmiData/variantGroups/Common/texts/zh_CN.json');
+  const bundleStrings = JSON.parse(zhBundleEntry.toString('utf8'));
+  const vals = Object.values(bundleStrings);
+  assert.ok(vals.includes('通用设置') && vals.includes('全屏地图与导航布局'), 'RHMI StringBundle must contain Simplified Chinese titles');
+  assert.ok(Object.prototype.hasOwnProperty.call(bundleStrings, 'SID_CN_DYNAMIC_0000'), 'SID_CN_DYNAMIC pool must be pre-allocated');
+
+  // Verify every Chinese translation character in zh-CN.json is covered by baked cjk_gothic.pack
+  const { Canvas } = require(path.join(ROOT, 'vendor', 'cauliflowermossgrape-idrive7-apps', 'kit', 'runtime', 'canvas'));
+  const fontsMod = require(path.join(ROOT, 'vendor', 'cauliflowermossgrape-idrive7-apps', 'kit', 'runtime', 'fonts'));
+  const { installStockBmwFonts } = require(path.join(ROOT, 'apps', 'id7_cockpit_plus', 'bmw_font'));
+  installStockBmwFonts(fontsMod, { cacheDir: os.tmpdir(), fontDir: path.join(ROOT, 'apps', 'id7_cockpit_plus') });
+  const cv = new Canvas(400, 100);
+  const zhDict = JSON.parse(fs.readFileSync(path.join(ROOT, 'vendor', 'cauliflowermossgrape-idrive7-apps', 'kit', 'runtime', 'locales', 'zh-CN.json'), 'utf8'));
+  const missing = [];
+  for (const val of Object.values(zhDict)) {
+    for (const ch of val) {
+      if (ch.charCodeAt(0) > 0x7f && cv.textWidth(ch, 22, { font: 'bold' }) <= 0) {
+        missing.push(ch);
+      }
+    }
+  }
+  assert.strictEqual(missing.length, 0, 'Missing CJK glyphs in cjk_gothic.pack: ' + missing.join(','));
+}
+
 function main() {
   const tests = [
     testBuildCockpitProfileDisablesPodsOnly,
     testActivateAndDeactivateWithExistingLocalConf,
     testActivateNoOpWhenWazeAbsent,
-    testAppRequiresAndSchema2Catalog
+    testOverlayRendererFullviewMapHost,
+    testAppRequiresAndSchema2Catalog,
+    testFullviewUpstreamPatcherAndExtraCatalog,
+    testSimplifiedChineseLocaleAndPackage
   ];
   for (const fn of tests) {
     fn();

@@ -1,82 +1,62 @@
-# Cockpit+ for BMW iDrive 7 (`id7_cockpit_plus`)
+# Cockpit+ FullView Suite for BMW iDrive 7 (`id7_cockpit_plus`)
 
-**Cockpit+** is a dual-component MGU Store navigation and instrument overlay suite for **BMW iDrive 7 (MGU / KOMBI4 + HUD)**:
+**Cockpit+** is a complete, 100% open-source MGU Store navigation & digital cockpit suite for **BMW iDrive 7 (MGU / KOMBI4 + HUD)** — zero paid third-party full-screen map apps required.
 
-- **Pure Full-Screen CarPlay / AMAP / Baidu Map Layer** (`cockpit-fullview` + `waze-on-cluster`): keeps `waze-on-cluster`'s `1632x720` `panel-safe` FullView H.264 video projection, KOMBI4 contour mask (`shape_top` / `shape_bottom`), overspeed halo, and HUD map alive while automatically switching to a clean `ID7-cockpit` profile (`speed_pod = 0`, `guidance_pod = 0`, `trip_pod = 0`) so C++ pods never overlap `Cockpit+`.
-- **Calibrated Cluster+ & Navigation Overlays** (`id7_cockpit_plus` v0.9.3): sits cleanly on `panel` (`0x203`, `z = 11..15`) and `hud` (`0x323`) above the full-screen map without touching stock tachometer/speedometer needles or the right power meter.
+Adding **`Hyperionism/idrive7-cockpit-plus`** as a single MGU Store Releases source gives users every open-source runtime needed for full-screen CarPlay / Android Auto / AMAP / Baidu map projection and HUD/Cluster telemetry:
 
----
-
-## Features & Layer Layout
-
-| Zone | Widget | Details |
-| :--- | :--- | :--- |
-| **Background Map** | FullView H.264 CarPlay / AMAP / Baidu | Configured automatically via **`cockpit-fullview`** (`ID7-cockpit` profile: keeps `1632x720` FullView map, disables redundant C++ pods cleanly and reversibly) |
-| **Top Center** | **5AU Lane Guidance** (`lane_guidance`) | 5-lane highway schematic highlighting active/recommended lanes; auto-scales at `4..5` lanes; toggleable & X/Y adjustable |
-| **Center** | **iOS Turn Card** (`guidance_turn_card`) | Renders turn arrow icon, street name, and remaining distance only within configurable trigger threshold (default **`350 m`**; supports `200 / 350 / 500 / 800 m / always`); supports CJK & CarPlay / Baidu maneuvers |
-| **Bottom Center** | **ETA Capsule** (`eta_pill`) | Dark rounded capsule showing distance, ETA time, and arrival clock; auto-hides when navigation stops |
-| **Center Digital Speed** | **Frameless Speed** (`speed`) | Clean digital speed readout with dark outline (`km/h` / `mph`); toggleable & X/Y adjustable |
-| **Right Wing (Locked)** | **Cluster+ Wing Panel** (`right_widget`) | Media / Now Playing (with album art), Trip Computer, TPMS, or Charging telemetry; locked to calibrated `chyiz` v0.9.3 curved KOMBI4 mask |
-| **Left Side** | **Engine & Driving Vitals** (`below_speed`) | Per-line compact telemetry (gear/oil/boost/fuel/voltage/tire/range) tucked cleanly below speed dial |
-| **HUD (`0x323`)** | **Bold Navigation & Speed** | Crisp maneuver arrow, turn distance, ETA strip, and optional secondary speed readout |
+| Component | Kind | Version | Purpose |
+| :--- | :--- | :--- | :--- |
+| **`cluster-render`** | Tool | `0.8.14` | Shared RAMSES 19 + Dcsm2 cluster & HUD compositor with unlocked `1632x720` map texture ceiling (from `robertnisipeanu/idrive-apps`, MPL-2.0 / GPL-3.0) |
+| **`waze-on-cluster`** | Tool | `0.14.16` | FullView CarPlay / Android Auto H.264 decoder (`tex_size = 1632x720`, `hosted_vpp_scale = 1`, `--res 1632x720`) + HUD map projection (from `robertnisipeanu/idrive-apps`, GPL-3.0) |
+| **`robertn_waze_cluster`** | App | `0.6.16` | *Maps on Cluster* iDrive control UI to enable/verify the in-memory CarPlay / AA patch, toggle HUD map, and view logs (GPL-3.0) |
+| **`mgu-render`** | Tool *(optional)* | `0.6.26` | 60 fps OpenGL ES 2 GPU renderer daemon (`mgu-renderd` successor from `robertnisipeanu/mgu-store`) for GPU-drawn MGU apps |
+| **`cockpit-fullview`** | Tool | `1.0.0` | Automatically sets `ID7-cockpit` (`speed_pod = 0`, `guidance_pod = 0`, `trip_pod = 0`) if a legacy `2.x` paid `waze-on-cluster` fork is still present; harmlessly skips on open-source installs |
+| **`id7_cockpit_plus`** | App | `0.9.4` | **Cockpit+**: auto-hosts the `1632x720` live CarPlay/AA map on `panel` (`0x203`) with curved KOMBI4 bezel masking underneath calibrated 5AU lanes, centered 350 m iOS turn card, ETA capsule, digital speed, left vitals, right wing widget, and HUD nav |
 
 ---
 
-## Coexistence Guarantee (Zero Overlap)
+## Visual Layout & Zero-Overlap Hosting
 
-When installing `id7_cockpit_plus` from MGU Store, MGU Store automatically installs its companion root tool **`cockpit-fullview`**:
+When `Cockpit+` runs on `panel` (`0x203`, `1920x720`):
 
-1. **Before**: Stock `waze-on-cluster` draws 3 hard-coded C++ boxes (`speed_pod` at left, `guidance_pod` at `1304,326` colliding with the right wing, `trip_pod` at bottom center colliding with the ETA pill).
-2. **With `cockpit-fullview` (`ID7-cockpit`)**:
-   - Keeps `waze-on-cluster`'s `1632x720` `panel-safe` FullView map, contour arcs, overspeed rim, and HUD map intact.
-   - Backs up your existing `/var/opt/waze-on-cluster/waze-on-cluster.local.conf` once to `.cockpit-bak` and sets `fullview_profile = ID7-cockpit` with `speed_pod = 0`, `guidance_pod = 0`, `trip_pod = 0`.
-   - Uninstalling `cockpit-fullview` automatically restores your original `waze-on-cluster` configuration.
-3. **Standalone systems**: If `waze-on-cluster` is not installed on the head unit, `cockpit-fullview` exits cleanly (`0`) and `Cockpit+` operates directly over the native black KOMBI4 background.
-
-> Previously installed another HUD/cluster overlay app (including modified third-party bundles that moved `cluster-render`'s `panel_slot` to `0x202`)? Uninstall the old overlay app first, and run `sh scripts/configure-cluster-slot.sh --revert` over SSH if needed to restore `panel_slot = 0x203`.
-
----
-
-## Requirements
-
-- **BMW MGU (iDrive 7 / ID7)** with `cluster-render` `>= 0.4.0` installed.
-- *(For full-screen CarPlay / AMAP / Baidu projection)* `waze-on-cluster` already installed on MGU (`cockpit-fullview` configures it automatically; zero USB or SSH needed).
+1. **Hosted FullView Video Layer (`z = 0`, `144,0` `1632x720`)**: `Cockpit+` uses `cluster-render`'s `host` API to render `waze-on-cluster`'s `1632x720` H.264 stream (Apple Maps, Google Maps, AMAP/高德, Baidu Maps/百度, Waze) directly inside the central instrument area underneath `Cockpit+`'s overlays.
+2. **KOMBI4 Bezel Corner Fade (`z = 2`)**: GLSL `bezel_mask` shader smoothly feathers the inner curved dial bezel corners (`shape_top = 374x354`, `shape_bottom = 408x168`) without uploading extra bitmaps.
+3. **Cockpit+ Overlay Zones (`z = 11..15`)**:
+   - **Top Center**: **5AU Lane Guidance** (`lane_guidance`)
+   - **Center**: **iOS Turn Card** (`guidance_turn_card`, auto-shows within configurable threshold, default `350 m`)
+   - **Bottom Center**: **ETA Capsule** (`eta_pill`, auto-hides when not navigating)
+   - **Center Speed**: **Frameless Digital Speed** (`speed`, dark outline)
+   - **Left Vitals**: Per-line engine & driving vitals (`below_speed`)
+   - **Right Wing (Locked)**: Calibrated Media / Trip / TPMS / Charging widget (`right_widget`)
+4. **HUD (`0x323`)**: Bold maneuver card, top road/exit banner, compact 3-line telemetry, and auto-yield on native intersection mini-map.
 
 ---
 
 ## Install via MGU Store (Releases Feed)
 
-1. Open **MGU Store** on the head unit (connected to a phone hotspot or Wi-Fi).
-2. Under **Sources** -> **Add GitHub Repo**, select **Releases** and enter:
+1. Connect MGU to a phone hotspot or Wi-Fi and open **MGU Store** -> **Sources**.
+2. Choose **Releases** and add:
    ```text
    Hyperionism/idrive7-cockpit-plus
    ```
-3. Install **`Cockpit+` (`id7_cockpit_plus`)** — MGU Store automatically resolves and installs **`cockpit-fullview`** + verifies **`cluster-render`**.
-4. Reboot iDrive once (hold the volume knob ~30 seconds or let the car enter sleep).
+3. Install **`Cockpit+` (`id7_cockpit_plus`)** — MGU Store automatically installs `cluster-render`, `waze-on-cluster`, and `cockpit-fullview` in dependency order. Optionally install **`Maps on cluster` (`robertn_waze_cluster`)** to arm/check CarPlay & Android Auto patching from the iDrive menu, and **`mgu-render`** if you also run OpenGL ES 2 apps.
+4. Reboot iDrive once (hold the volume knob ~30 seconds).
+
+> **Note**: If migrating from modified third-party overlays, uninstall the old overlay apps first (keep `mgu-store` / `mgu-deploy`!), and if `cluster-render` `panel_slot` was changed to `0x202`, run `sh scripts/configure-cluster-slot.sh --revert`.
 
 ---
 
-## Fine-Tuning & Live Override
+## Local Verification & Simulator Bench
 
-- **On iDrive screen**: `Cockpit+ -> Cluster -> Nav & Speed Positions / Trigger...` adjusts the iOS turn card distance threshold, toggles overlays, and nudges X/Y coordinates of `lane_guidance`, `guidance_turn_card`, `eta_pill`, and `speed` in real time.
-- **Via SSH JSON hot-reload (optional)**: write overrides to `/var/opt/cluster-render/cockpit_layout.json` (1-second hot reload; `right_widget` remains locked against accidental corruption).
-- **Local PC Preview Bench**:
-  ```sh
-  npm run bench
-  ```
-  Opens a browser simulator at `http://127.0.0.1:4400` reproducing `panel` (`1920x720`) + `hud` (`480x160`), with Day/Night and Full-Screen CarPlay/AMAP map mock modes.
-
----
-
-## Repository Structure
-
-- `apps/id7_cockpit_plus/` — Node 8.16.2 (`ES2017`) OAP app source, KOMBI4/HUD renderers, navigation tracker, and CJK glyph support
-- `tools/cockpit-fullview/` — MGU Store companion root tool (`kind: "tool"`) that switches `waze-on-cluster` to `ID7-cockpit` pure FullView mode
-- `bench/` — Cross-platform (Windows Named Pipe + Linux/macOS Unix socket) PC live cluster/HUD preview simulator
-- `release/build_catalog.js` — Packages both app and tool `.tgz` archives and generates MGU Store Schema 2 `catalog.json` + `mgu-store.json`
-- `scripts/` — Optional SSH helpers (`configure-waze-pods.sh`, `configure-cluster-slot.sh`)
-- `test/` — Automated stub-SDK build tests, glyph checks, `cockpit-fullview` unit tests, and Schema 2 catalog tests
+```sh
+python3 vendor/cauliflowermossgrape-idrive7-apps/kit/tools/build.py --app-root . --stub-sdk id7_cockpit_plus
+REQUIRE_DIST=1 node test/run_tests.js
+node test/fullview_companion_test.js
+npm run bench
+```
 
 ## License
 
-GPL-3.0-only (based on `cauliflowermossgrape` / `chyiz` iDrive 7 app tooling).
+- `id7_cockpit_plus`, `waze-on-cluster`, `robertn_waze_cluster`: **GPL-3.0-only / GPL-3.0-or-later**
+- `cluster-render` client/protocol/kit: **MPL-2.0**; service: **GPL-3.0-or-later**
+- `mgu-render`: **GPL-3.0 / MIT**

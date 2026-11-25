@@ -1,8 +1,8 @@
 {
   "id": "id7_cockpit_plus",
   "title": "Cockpit+",
-  "description": "Cockpit+ for BMW iDrive 7 (KOMBI4 + HUD): calibrated Cluster+ wing widgets, per-line left speed telemetry, 5AU top-center CarPlay/Baidu lane guidance, centered iOS turn card & ETA pill with adjustable layout, and bold HUD navigation",
-  "version": "0.9.3",
+  "description": "Cockpit+ for BMW iDrive 7 (KOMBI4 + HUD): calibrated Cluster+ wing widgets, per-line left speed telemetry, 5AU top-center CarPlay/Baidu lane guidance, centered iOS turn card & ETA pill over hosted FullView 1632x720 map, and bold HUD navigation",
+  "version": "0.9.4",
   "autostart": true,
   "license": "GPL-3.0-only",
   "vendor": "idrive7-cockpit-plus",
@@ -28,7 +28,8 @@
   "iconGlyph": "id7_cockpit_plus",
   "mguHmi": ["ID7"],
   "requires": {
-    "cluster-render": "0.4.0",
+    "cluster-render": "0.8.14",
+    "waze-on-cluster": "0.14.16",
     "cockpit-fullview": "1.0.0"
   },
   "signals": {
@@ -393,6 +394,8 @@
       "title": "Cluster Nav & Speed Layout",
       "repoLink": false,
       "settings": [
+        "mapHostMode",
+        "mapBezelMask",
         "clusterLaneBar",
         "clusterTurnCard",
         "turnCardTriggerM",
@@ -1108,6 +1111,32 @@
         8,
         12
       ]
+    },
+    {
+      "key": "mapHostMode",
+      "label": "Full-screen CarPlay map host",
+      "type": "choice",
+      "default": "fullview",
+      "options": [
+        [
+          "fullview",
+          "FullView 1632x720 (default)"
+        ],
+        [
+          "center",
+          "Center 1088x480"
+        ],
+        [
+          "off",
+          "Off (Native Map Slot)"
+        ]
+      ]
+    },
+    {
+      "key": "mapBezelMask",
+      "label": "KOMBI4 bezel corner fade",
+      "type": "bool",
+      "default": true
     },
     {
       "key": "clusterLaneBar",

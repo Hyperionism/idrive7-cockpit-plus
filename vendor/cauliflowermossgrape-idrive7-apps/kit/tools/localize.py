@@ -25,7 +25,7 @@ def text(value, words):
 
 
 def package_version(version, language):
-    return version if language == 'en' else version + '-' + language.lower().replace('-', '.') + '.1'
+    return version
 
 
 def localize_spec(spec, language):
