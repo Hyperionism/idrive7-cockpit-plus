@@ -80,11 +80,10 @@ function patchIdriveApps(rootDir) {
   crComp.version = UPSTREAM_PINS.clusterRenderVersion;
   fs.writeFileSync(crCompPath, JSON.stringify(crComp, null, 2) + '\n', 'utf8');
 
-  // 3. Configure waze-on-cluster defaults for crisp 1632x720 hosted FullView + HUD yield
+  // 3. Configure waze-on-cluster defaults for crisp 1632x720 hosted FullView (keep opt-in keys = 0 for opt_in_test)
   const wocConfPath = path.join(wocDir, 'waze-on-cluster.conf');
   let wocConf = fs.readFileSync(wocConfPath, 'utf8');
   wocConf = setIniLine(wocConf, 'tex_size', '1632x720');
-  wocConf = setIniLine(wocConf, 'hosted_vpp_scale', '1');
   fs.writeFileSync(wocConfPath, wocConf, 'utf8');
 
   // 4. Patch patchd.js so --panel high defaults to 1632x720 when waze-on-cluster.conf sets tex_size = 1632x720
