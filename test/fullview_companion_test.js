@@ -168,7 +168,7 @@ function testFullviewUpstreamPatcherAndExtraCatalog() {
   assert.ok(fs.readFileSync(path.join(crDir, 'kit', 'map_geometry.h'), 'utf8').includes('kMaxMapTexWidth = 1632'));
   assert.ok(fs.readFileSync(path.join(crDir, 'kit', 'map_geometry.cpp'), 'utf8').includes('tex_h > kMaxMapTexHeight'));
   assert.ok(/^\s*tex_size\s*=\s*1632x720\s*$/m.test(fs.readFileSync(path.join(wocDir, 'waze-on-cluster.conf'), 'utf8')));
-  assert.ok(/^\s*hosted_vpp_scale\s*=\s*1\s*$/m.test(fs.readFileSync(path.join(wocDir, 'waze-on-cluster.conf'), 'utf8')));
+  assert.ok(/^\s*hosted_vpp_scale\s*=\s*0\s*$/m.test(fs.readFileSync(path.join(wocDir, 'waze-on-cluster.conf'), 'utf8')));
   assert.ok(fs.readFileSync(path.join(wocDir, 'patch', 'patchd.js'), 'utf8').includes('cockpitFullviewResArgs'));
 
   const mguRoot = path.join(tmp, 'mgu-store');
