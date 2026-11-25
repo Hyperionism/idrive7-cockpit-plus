@@ -60,9 +60,13 @@ jobs:
           python3 vendor/cauliflowermossgrape-idrive7-apps/kit/tools/build.py --app-root . --stub-sdk id7_cockpit_plus
 
       - name: Run full verification suite before publishing
-        run: node test/run_tests.js
+        env:
+          REQUIRE_DIST: "1"
+        run: |
+          node test/run_tests.js
+          node test/fullview_companion_test.js
 
-      - name: Build clean no-SDK release tarball & Schema 2 catalog
+      - name: Build clean no-SDK release packages & Schema 2 catalog
         run: |
           rm -rf dist/
           node release/build_catalog.js --repo "${{ github.repository }}" --tag "${{ steps.meta.outputs.tag }}"
@@ -74,12 +78,14 @@ jobs:
         run: |
           TAG="${{ steps.meta.outputs.tag }}"
           VER="${{ steps.meta.outputs.version }}"
-          TGZ="dist/id7_cockpit_plus@${VER}.tgz"
-          NOTES="Cockpit+ v${VER} (id7_cockpit_plus) for BMW iDrive 7 (ID7 / KOMBI4 + HUD). Requires cluster-render >= 0.4.0."
+          APP_TGZ="dist/id7_cockpit_plus@${VER}.tgz"
+          TOOL_VER=$(node -e "console.log(require('./tools/cockpit-fullview/component.json').version)")
+          TOOL_TGZ="dist/cockpit-fullview@${TOOL_VER}.tgz"
+          NOTES="Cockpit+ v${VER} (id7_cockpit_plus) + Cockpit+ FullView Companion ${TOOL_VER} (cockpit-fullview) for BMW iDrive 7 (ID7 / KOMBI4 + HUD). Pure 1632x720 FullView CarPlay/AMAP/Baidu map + zero-overlap Cockpit+ overlays."
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" "$TGZ" dist/mgu-store.json dist/catalog.json dist/id7_cockpit_plus.png --clobber
+            gh release upload "$TAG" "$APP_TGZ" "$TOOL_TGZ" dist/mgu-store.json dist/catalog.json dist/id7_cockpit_plus.png --clobber
           else
-            gh release create "$TAG" "$TGZ" dist/mgu-store.json dist/catalog.json dist/id7_cockpit_plus.png --title "Cockpit+ v${VER}" --notes "$NOTES"
+            gh release create "$TAG" "$APP_TGZ" "$TOOL_TGZ" dist/mgu-store.json dist/catalog.json dist/id7_cockpit_plus.png --title "Cockpit+ v${VER}" --notes "$NOTES"
           fi
 
       - name: Create or update floating catalog release for MGU Store

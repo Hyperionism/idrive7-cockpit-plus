@@ -26,7 +26,11 @@ jobs:
         run: python3 vendor/cauliflowermossgrape-idrive7-apps/kit/tools/build.py --app-root . --stub-sdk id7_cockpit_plus
 
       - name: Run automated test suite
-        run: node test/run_tests.js
+        env:
+          REQUIRE_DIST: "1"
+        run: |
+          node test/run_tests.js
+          node test/fullview_companion_test.js
 
       - name: Dry-run no-SDK release build & catalog check
         run: |
