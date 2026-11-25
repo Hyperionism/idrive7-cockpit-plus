@@ -32,11 +32,11 @@
 
 ## Publishing Without USB or Git CLI
 
-1. Create a **Public** GitHub repository (for example `<username>/idrive7-cockpit-plus`).
-2. Upload all files from this folder via GitHub Web (**Add file -> Upload files**, total ~93 files — fits in a single upload; make sure hidden `.github/` folder is visible when dragging!).
+1. Create a **Public** GitHub repository (`Hyperionism/idrive7-cockpit-plus`).
+2. Upload all files from this folder via GitHub Web (**Add file -> Upload files**, total ~95 files — fits in a single upload; make sure hidden `.github/` folder is visible when dragging!).
 3. Open the **Actions** tab on GitHub -> **Build and Publish MGU Store Release** -> **Run workflow**.
 4. GitHub Actions automatically runs all tests, builds the `--omit-sdk` package (`id7_cockpit_plus@0.9.3.tgz`, without proprietary `oap-sdk`), generates `mgu-store.json` & Schema 2 `catalog.json`, and publishes both `v0.9.3` and `catalog` GitHub Releases.
-5. In your car's **MGU Store**, add `<username>/idrive7-cockpit-plus` (**Releases**) and install **Cockpit+**.
+5. In your car's **MGU Store**, add `Hyperionism/idrive7-cockpit-plus` (**Releases**) and install **Cockpit+**.
 
 See [`docs/GITHUB_SETUP_ZH.md`](docs/GITHUB_SETUP_ZH.md) for the complete beginner-friendly Chinese guide.
 

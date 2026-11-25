@@ -23,7 +23,7 @@
     "- latin_auto.pack, kit/fonts/cjk.json & cjk_gothic.pack: Noto Sans & Noto Sans CJK (SC/JP/TC/KR), SIL Open Font License 1.1 (LICENSE-NotoSansCJK.txt)"
   ],
   "repoTitle": "GitHub Repository",
-  "repoLink": "github.com/OWNER/idrive7-cockpit-plus",
+  "repoLink": "github.com/Hyperionism/idrive7-cockpit-plus",
   "loggingId": "OA7C",
   "iconGlyph": "id7_cockpit_plus",
   "mguHmi": ["ID7"],

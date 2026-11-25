@@ -21,7 +21,7 @@ const BUILD_PY = path.join(ROOT, 'vendor', 'cauliflowermossgrape-idrive7-apps', 
 const MAX_TAR_BYTES = 32 * 1024 * 1024;
 
 function parseArgs(argv) {
-    const args = { repo: process.env.GITHUB_REPOSITORY || 'OWNER/idrive7-cockpit-plus', tag: '', skipBuild: false, dryRun: false };
+    const args = { repo: process.env.GITHUB_REPOSITORY || 'Hyperionism/idrive7-cockpit-plus', tag: '', skipBuild: false, dryRun: false };
     for (let i = 2; i < argv.length; i++) {
         const a = argv[i];
         if (a === '--repo' && argv[i + 1]) { args.repo = argv[++i]; }
@@ -33,8 +33,15 @@ function parseArgs(argv) {
 }
 
 function findPython() {
-    const candidates = process.platform === 'win32' ? ['python', 'python3', 'py'] : ['python3', 'python'];
+    const candidates = process.platform === 'win32'
+        ? [
+            'python3', 'python', 'py',
+            path.join(process.env.LOCALAPPDATA || '', 'Python', 'bin', 'python.exe'),
+            path.join(process.env.LOCALAPPDATA || '', 'Python', 'bin', 'python3.exe'),
+        ]
+        : ['python3', 'python'];
     for (let i = 0; i < candidates.length; i++) {
+        if (!candidates[i]) continue;
         try {
             const out = execFileSync(candidates[i], ['--version'], { stdio: ['ignore', 'pipe', 'pipe'] }).toString('utf8').trim();
             if (/Python 3/i.test(out)) return candidates[i];

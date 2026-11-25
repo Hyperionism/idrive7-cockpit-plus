@@ -20,7 +20,11 @@ const visible = require(path.join(ROOT_DIR, 'shared', 'visible'));
 
 const APP_ID = 'id7_cockpit_plus';
 const HTTP_PORT = Number(process.env.PORT || 8078);
-const IPC_SOCK = process.env.BENCH_SOCK || path.join(os.tmpdir(), 'id7-cockpit-plus-bench-' + process.pid + '.sock');
+const IPC_SOCK = process.env.BENCH_SOCK || (
+    process.platform === 'win32'
+        ? ('\\\\.\\pipe\\id7-cockpit-plus-bench-' + process.pid)
+        : path.join(os.tmpdir(), 'id7-cockpit-plus-bench-' + process.pid + '.sock')
+);
 const MAX_LAYERS_PER_CONN = Number(process.env.BENCH_LAYER_CAP || 24);
 const MAX_PIXEL_MEMORY = 16 * 1024 * 1024;
 const DISPLAY_TARGETS = {
@@ -225,8 +229,27 @@ const ipcServer = net.createServer((socket) => {
     });
 });
 
+function findPython() {
+    const candidates = process.platform === 'win32'
+        ? [
+            'python3', 'python', 'py',
+            path.join(process.env.LOCALAPPDATA || '', 'Python', 'bin', 'python.exe'),
+            path.join(process.env.LOCALAPPDATA || '', 'Python', 'bin', 'python3.exe'),
+        ]
+        : ['python3', 'python'];
+    for (let i = 0; i < candidates.length; i++) {
+        if (!candidates[i]) continue;
+        try {
+            const out = execFileSync(candidates[i], ['--version'], { stdio: ['ignore', 'pipe', 'pipe'] }).toString('utf8').trim();
+            if (/Python 3/i.test(out)) return candidates[i];
+        } catch (e) { /* try next */ }
+    }
+    throw new Error('Python 3 not found on PATH; install Python 3 to run bench');
+}
+
 function launchWorker() {
-    const buildOut = execFileSync('python3', [BUILD_SCRIPT, '--app-root', ROOT_DIR, '--stub-sdk', APP_ID], {
+    const pyBin = findPython();
+    const buildOut = execFileSync(pyBin, [BUILD_SCRIPT, '--app-root', ROOT_DIR, '--stub-sdk', APP_ID], {
         cwd: ROOT_DIR,
         env: Object.assign({}, process.env, { OAP_STUB_SDK: '1' }),
         stdio: ['ignore', 'pipe', 'pipe'],
@@ -354,7 +377,13 @@ const httpServer = http.createServer(async (req, res) => {
     res.end();
 });
 
-try { fs.unlinkSync(IPC_SOCK); } catch (e) { /* none */ }
+function cleanupSocketPath() {
+    if (IPC_SOCK && IPC_SOCK.indexOf('\\\\.\\pipe\\') !== 0) {
+        try { fs.unlinkSync(IPC_SOCK); } catch (e) { /* none */ }
+    }
+}
+
+cleanupSocketPath();
 ipcServer.listen(IPC_SOCK, () => {
     httpServer.listen(HTTP_PORT, '127.0.0.1', () => {
         emitLog('info', 'bench listening at http://127.0.0.1:' + HTTP_PORT + ' (sock ' + IPC_SOCK + ')');
@@ -364,7 +393,7 @@ ipcServer.listen(IPC_SOCK, () => {
 
 function cleanupAndExit() {
     if (workerProc) workerProc.kill('SIGTERM');
-    try { fs.unlinkSync(IPC_SOCK); } catch (e) { /* none */ }
+    cleanupSocketPath();
     process.exit(0);
 }
 process.on('SIGINT', cleanupAndExit);

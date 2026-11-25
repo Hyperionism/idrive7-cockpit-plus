@@ -68,7 +68,7 @@ GitHub Actions 构建脚本位于 `.github` 隐藏目录中。上传前务必确
 2. 打开车机上的 **MGU Store** -> 进入插件源 / **Sources**（或 Add GitHub Repo）。
 3. 推荐模式：**Releases**，输入：
    ```text
-   你的GitHub用户名/idrive7-cockpit-plus
+   Hyperionism/idrive7-cockpit-plus
    ```
    *(注：仓库根目录也附带了 `mgu-repo.json`，如使用 Branch `main` 模式也可识别，但强烈建议走 **Releases** 模式，安装最快。)*
 4. 确认列表里 **`cluster-render`**（`>= 0.4.0`）已安装，然后安装 **`Cockpit+` (`id7_cockpit_plus`)**。
