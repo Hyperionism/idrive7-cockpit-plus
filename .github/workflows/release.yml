@@ -72,14 +72,12 @@ jobs:
 
       - name: Fetch, patch & build open-source native MGU components (cluster-render, waze-on-cluster, mgu-render)
         run: |
-          mkdir -p /tmp/up/idrive-apps /tmp/up/mgu-store
-          git -C /tmp/up/idrive-apps init -q
-          git -C /tmp/up/idrive-apps fetch -q --depth 1 https://github.com/robertnisipeanu/idrive-apps.git "${{ steps.meta.outputs.idrive_sha }}"
-          git -C /tmp/up/idrive-apps checkout -q -B main FETCH_HEAD
+          rm -rf /tmp/up && mkdir -p /tmp/up
+          git clone -q https://github.com/robertnisipeanu/idrive-apps.git /tmp/up/idrive-apps
+          git -C /tmp/up/idrive-apps checkout -q -B main "${{ steps.meta.outputs.idrive_sha }}"
 
-          git -C /tmp/up/mgu-store init -q
-          git -C /tmp/up/mgu-store fetch -q --depth 1 https://github.com/robertnisipeanu/mgu-store.git "${{ steps.meta.outputs.mgu_store_sha }}"
-          git -C /tmp/up/mgu-store checkout -q -B main FETCH_HEAD
+          git clone -q https://github.com/robertnisipeanu/mgu-store.git /tmp/up/mgu-store
+          git -C /tmp/up/mgu-store checkout -q -B main "${{ steps.meta.outputs.mgu_store_sha }}"
 
           node native/fullview-patch.js --idrive-apps /tmp/up/idrive-apps --mgu-store /tmp/up/mgu-store
 
