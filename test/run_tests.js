@@ -3202,6 +3202,32 @@ function inBox(x, y, box) {
             timeToDestination: 2100,
         });
         assert(dInfo && dInfo.hour === 9 && dInfo.min === 5 && dInfo.remainMeters === 12400 && dInfo.remainSec === 2100);
+
+        // Verify release/build_catalog.js matches build.py's dist/<id>/source + package/*.tgz layout
+        const { execFileSync } = require('child_process');
+        const { verifyPackage } = require(path.join(ROOT, 'release', 'build_catalog'));
+        const mockBase = fs.mkdtempSync(path.join(os.tmpdir(), 'cockpit-pkg-test-'));
+        const mockStage = path.join(mockBase, appSpec.id);
+        const mockSrc = path.join(mockStage, 'source');
+        fs.mkdirSync(path.join(mockSrc, 'javascript'), { recursive: true });
+        fs.writeFileSync(path.join(mockSrc, 'package.json'), JSON.stringify({
+            name: appSpec.id,
+            version: appSpec.version,
+            private: false,
+            main: 'javascript/app.js',
+            oapAppSettings: { someipManifest: 'manifest.json' },
+        }));
+        fs.writeFileSync(path.join(mockSrc, 'manifest.json'), '{}');
+        fs.writeFileSync(path.join(mockSrc, 'javascript', 'app.js'), "'use strict';\n");
+        const mockTgz = path.join(mockBase, appSpec.id + '@' + appSpec.version + '.tgz');
+        const pkgLink = path.join(mockBase, 'package');
+        fs.renameSync(mockSrc, pkgLink);
+        const tarCmd = process.platform === 'win32' ? 'tar.exe' : 'tar';
+        execFileSync(tarCmd, ['-czf', mockTgz, '-C', mockBase, 'package']);
+        fs.renameSync(pkgLink, mockSrc);
+        const vRes = verifyPackage(mockStage, mockTgz, appSpec);
+        assert(vRes && vRes.size > 0 && vRes.entryCount >= 3);
+        fs.rmSync(mockBase, { recursive: true, force: true });
     });
 
     console.log('\nAll ' + passed + ' tests passed.');
