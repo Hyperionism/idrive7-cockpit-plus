@@ -5,90 +5,68 @@
 
 ---
 
-## 一、车机安装前检查（重点）
+## 一、车机安装前检查 & 全屏导航联用说明（重点）
 
-1. **是否要先卸载之前安装的国内版？**  
-   - **是的，先在车机 MGU Store 卸载旧的“国内版”应用**，避免两个仪表增强应用同时抢占 HUD（`0x323`）和仪表扩展层（`0x203`）导致图层覆盖或超出上限。
-2. **保留或确认底层依赖 `cluster-render`（>= 0.4.0）：**
-   - `cluster-render` 必须保持安装状态，且 `panel_slot` 保持默认的 **`0x203`**。
-   - 如果旧的国内版改写过 `/var/opt/cluster-render/cluster-render.local.conf` 成了 `panel_slot = 0x202`（会导致功率表和右侧多媒体异常），可通过 SSH 在车机执行本仓库的还原脚本：
-     ```sh
-     sh configure-cluster-slot.sh --revert
-     ```
-3. **如果你车上同时装了 `waze-on-cluster`：**
-   - 如果希望仪表盘只显示 `Cockpit+` 自己的居中数字速度、5AU 车道条、iOS 转向卡和 ETA 胶囊，可按需通过 SSH 运行 `scripts/configure-waze-pods.sh` 关闭 Waze 原版重复的小窗。
+1. **全屏导航联用架构（全自动，零重复遮挡）：**
+   - 你车上已安装的 `waze-on-cluster`（2.0.29）负责解码 **1632×720 FullView 全屏导航视频**（CarPlay 高德 / 百度 / Apple 地图）以及红圈超速警示、HUD 地图。
+   - 本仓库现在打包**双组件**：
+     1. **`cockpit-fullview`（伴侣配置工具，v1.0.0）**：MGU Store 安装 `Cockpit+` 时**自动先安装**，自动把 `ID7.conf` 复制为 `ID7-cockpit.conf`，**只保留全屏地图画面**，并把原版会挡住界面、位置重合的 3 个内置小窗（`speed_pod = 0`、`guidance_pod = 0`、`trip_pod = 0`）干净关闭（已自动备份原配置，卸载即可一键还原）。
+     2. **`id7_cockpit_plus`（Cockpit+ 仪表/HUD 套件，v0.9.3）**：以高优先级图层叠加显示 5AU 顶置居中车道线、居中 iOS 转向卡（默认 ≤350 米自动弹出）、底部 ETA 胶囊、居中无框数字车速、左侧单行车况与右侧曲面多媒体/行程卡片（Locked），全程**互不遮挡**。
+2. **是否要先卸载之前安装的其它 HUD/仪表覆盖插件？**
+   - **是的，请先在 MGU Store 卸载旧的第三方仪表覆盖插件**（保留 `cluster-render` 和 `waze-on-cluster` 即可），避免旧插件把 `panel_slot` 改去 `0x202` 或重复抢占 HUD（`0x323`）。
+   - 如果旧插件改过 `/var/opt/cluster-render/cluster-render.local.conf` 成了 `panel_slot = 0x202`，可通过 SSH 执行 `sh scripts/configure-cluster-slot.sh --revert` 恢复 `0x203`。
 
 ---
 
-## 二、在 GitHub 网页上创建仓库并上传代码（无需装 Git / Python）
+## 二、同步更新到 GitHub 网页版仓库（无需装 Git / Python）
 
-### 第 1 步：创建公开仓库
-1. 登录 [github.com](https://github.com)，点击右上角 **`+`** -> **`New repository`**。
-2. **Repository name** 填写：`idrive7-cockpit-plus`。
-3. **Visibility 必须选择 `Public`**（车机 MGU Store 需要公开拉取 Releases）。
-4. **不要勾选** `Add a README file`、`.gitignore` 或 `license`（项目内均已配好）。
-5. 点击 **`Create repository`**。
+### 第 1 步：确认仓库可见性与显示隐藏文件夹
+1. 你的仓库 [`Hyperionism/idrive7-cockpit-plus`](https://github.com/Hyperionism/idrive7-cockpit-plus) 必须保持 **`Public`**。
+2. Windows 资源管理器显示隐藏项：
+   - 打开 `C:\Users\ASUS\.gemini\antigravity\scratch\idrive7-cockpit-plus`
+   - Windows 11：点击顶部 **`查看` -> `显示` -> 勾选 `隐藏的项目`**
+   - Windows 10：点击顶部 **`查看` -> 勾选 `隐藏的项目`**
 
-### 第 2 步：在 Windows 资源管理器显示隐藏文件夹（关键）
-GitHub Actions 构建脚本位于 `.github` 隐藏目录中。上传前务必确认能看到 `.github`：
-- 打开 `C:\Users\ASUS\.gemini\antigravity\scratch\idrive7-cockpit-plus`
-- Windows 11：点击顶部 **`查看` -> `显示` -> 勾选 `隐藏的项目`**
-- Windows 10：点击顶部 **`查看` -> 勾选 `隐藏的项目`**
+### 第 2 步：上传最新全部文件
+> 当前全库共 98 个文件（`< 100`），仍可一次完整拖拽上传。若本地曾运行过 `npm run bench` 或测试脚本，请先确认文件夹内**没有**临时生成的 `dist/` 或 `oap-sdk/` 目录再拖拽。
 
-### 第 3 步：一次性网页上传全库
-> 当前项目共 93 个文件，小于 GitHub 网页单次上传 100 个文件的限制，可以一次上传完毕，无需分批。
-
-1. 在新建的空仓库页面点击 **`uploading an existing file`**。
-2. 打开本地 `idrive7-cockpit-plus` 文件夹，**全选里面的所有内容**（注意：**进入文件夹全选里面的项，不要拖外层整个目录名**）：
-   - 文件夹：`.github`、`apps`、`bench`、`docs`、`release`、`scripts`、`shared`、`test`、`vendor`
+1. 打开 `https://github.com/Hyperionism/idrive7-cockpit-plus` -> 点击 **`Add file` -> `Upload files`**。
+2. 打开本地 `idrive7-cockpit-plus` 文件夹，**全选里面的所有内容**拖入网页上传框：
+   - 文件夹：`.github`、`apps`、`bench`、`docs`、`release`、`scripts`、`shared`、`test`、`tools`、`vendor`
    - 文件：`.gitignore`、`LICENSE`、`README.md`、`mgu-repo.json`、`package.json`
-3. 拖入 GitHub 网页的上传框中，等全部文件进度条加载完成。
-4. 底部填写提交说明（例如 `Initial Cockpit+ v0.9.3`），点击绿色 **`Commit changes`**。
-5. 上传完成后，确认网页文件列表里能看到 `.github/workflows/release.yml` 和 `mgu-repo.json`。
+3. 说明：`.github` 目录若被浏览器限制提示隐藏，保持把 `.github/workflows/*.yml` 一并拖到对应目录即可（你上次已经传成功 `.github`，这次如未改工作流也可或一起覆写上传）。
+4. 底部填写提交说明（例如 `Add cockpit-fullview companion & Schema 2 release catalog`），点击绿色 **`Commit changes`**。
 
 ---
 
 ## 三、一键云端打包并发布 GitHub Releases
 
-上传后，GitHub 云端会自动用 Linux + Python 3 + Node 20 完成完整构建与自检（不包含任何 BMW 私有 `oap-sdk`，符合 MGU Store 规范）：
-
-1. 在你的 GitHub 仓库顶部点击 **`Actions`** 标签页。
-2. 在左侧工作流列表中点击 **`Build and Publish MGU Store Release`**。
-3. 点击右侧 **`Run workflow`** 下拉按钮（`tag` 留空即可，会自动读取 `app.json` 中的版本号生成 `v0.9.3`），再点绿色的 **`Run workflow`**。
-4. 等待约 **30～45 秒**，任务变成绿色对勾 `✅`。
-5. 回到仓库主页右侧 **`Releases`**，确认已生成：
-   - **`v0.9.3`**：包含 `id7_cockpit_plus@0.9.3.tgz`、`mgu-store.json`、`catalog.json`、`id7_cockpit_plus.png`
-   - **`catalog`**：供 MGU Store 索引使用的 Schema 2 目录
+1. 上传后点击仓库顶部 **`Actions`**。
+2. 在左侧点击 **`Build and Publish MGU Store Release`** -> 右侧 **`Run workflow`**（`tag` 留空即可自动用 `v0.9.3`）。
+3. 等待 **30～45 秒**变为绿色 `✅`。
+4. 确认 **`Releases`** 里已生成：
+   - **`v0.9.3`**：同时包含 **`id7_cockpit_plus@0.9.3.tgz`**、**`cockpit-fullview@1.0.0.tgz`**、**`catalog.json`**（官方 Schema 2 数组格式）、`mgu-store.json`、`id7_cockpit_plus.png`
+   - **`catalog`**：供 MGU Store 索引的 Schema 2 滚动目录
 
 ---
 
-## 四、在车机 MGU Store 安装 Cockpit+
+## 四、在车机 MGU Store 一键安装（零 U 盘 / 零 SSH）
 
-1. 让车机连接手机热点 / Wi-Fi。
-2. 打开车机上的 **MGU Store** -> 进入插件源 / **Sources**（或 Add GitHub Repo）。
-3. 推荐模式：**Releases**，输入：
-   ```text
-   Hyperionism/idrive7-cockpit-plus
-   ```
-   *(注：仓库根目录也附带了 `mgu-repo.json`，如使用 Branch `main` 模式也可识别，但强烈建议走 **Releases** 模式，安装最快。)*
-4. 确认列表里 **`cluster-render`**（`>= 0.4.0`）已安装，然后安装 **`Cockpit+` (`id7_cockpit_plus`)**。
-5. 安装完成后重启一次主机（长按音量旋钮 ~30 秒或锁车休眠后唤醒即可生效）。
+1. 车机连上手机热点 / Wi-Fi，打开 **MGU Store** -> **Sources** -> 添加 GitHub 源：
+   - 模式选择：**Releases**
+   - 仓库填写：`Hyperionism/idrive7-cockpit-plus`
+2. 点击安装 **`Cockpit+` (`id7_cockpit_plus`)**：
+   - MGU Store 会自动先下载并激活 **`cockpit-fullview`**（自动把 `waze-on-cluster` 切到 `ID7-cockpit` 纯全屏地图模式、关闭重复的 3 个内置小窗），随后安装 `Cockpit+`。
+3. 安装完成后重启一次主机（长按音量旋钮 ~30 秒或锁车休眠）。
 
 ---
 
-## 五、上车后如何微调各组件位置与参数
+## 五、上车后的位置微调
 
-- **Locked（已锁定）**：右侧多媒体 / 行程 / 胎压 / 充电面板（`right_widget`）位置保持与 `chyiz` v0.9.3 完全一致并锁定，防止曲面遮罩错位。
-- **支持手动微调**：
-  1. **iDrive 屏幕直接调**：进入 `Cockpit+ -> Cluster -> Nav & Speed Positions / Trigger...`，可直接开关及微调：
-     - 5AU 顶置居中车道线（`laneBarNudgeX` / `laneBarNudgeY`）
-     - 居中 iOS 转向卡与自动弹出距离（默认 350 米，支持 200/350/500/800/常显，及 X/Y 偏移）
-     - 底部到达时间 ETA 胶囊（X/Y 偏移，结束导航后自动隐藏）
-     - 仪表中间无框数字车速（支持开关与 X/Y 偏移）
-  2. **无需重编译实时精调（可选）**：若后续连 SSH，可在 `/var/opt/cluster-render/cockpit_layout.json` 覆盖坐标（支持 `lane_guidance`、`guidance_turn_card`、`eta_pill`、`speed`、`below_speed` 等字段，`right_widget` 会被自动忽略保护），热重载约 1 秒生效。
-
----
-
-## 六、后续修改代码或升级版本
-
-- 若改了 `apps/id7_cockpit_plus/` 下的任意文件，顺便把 `apps/id7_cockpit_plus/app.json`、`mgu-repo.json`、`package.json` 里的版本号改高（例如 `0.9.4`），传上 GitHub 后再点一次 **Actions -> Run workflow**，车机 MGU Store 即可收到更新推送。
+- **右侧卡片 (`right_widget`)**：已与 `chyiz` v0.9.3 对齐并锁定，防止曲面遮罩错位。
+- **其余全屏导航元素可在 iDrive 屏幕实时微调**：进入 `Cockpit+ -> Cluster -> Nav & Speed Positions / Trigger...`，即可调整：
+  - 5AU 顶置车道条开关与 X/Y 微调
+  - 居中 iOS 转向卡弹出距离（`200 / 350 / 500 / 800 m / 常显`）与 X/Y 微调
+  - 底部 ETA 胶囊开关与 X/Y 微调
+  - 居中无框数字车速开关与 X/Y 微调
+- **电脑端模拟预览**：在本地终端运行 `npm run bench` 后浏览器打开 `http://127.0.0.1:4400`，即可切换到 **FullView Map + Cockpit+ 日间/夜间模式** 预览。

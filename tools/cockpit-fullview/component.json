@@ -1,0 +1,21 @@
+{
+  "id": "cockpit-fullview",
+  "kind": "tool",
+  "version": "1.0.0",
+  "title": "Cockpit+ FullView Companion",
+  "description": "Configures waze-on-cluster for pure 1632x720 FullView CarPlay/AMAP/Baidu map projection alongside Cockpit+ by disabling overlapping C++ speed/guidance/trip pods cleanly and reversibly",
+  "author": "Hyperionism",
+  "mguHmi": ["ID7"],
+  "uninstallable": true,
+  "files": [
+    {
+      "path": "cockpit_fullview.js",
+      "mode": "0755",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  ],
+  "units": [],
+  "restart": [],
+  "activate": ["node", "cockpit_fullview.js", "activate"],
+  "deactivate": ["node", "cockpit_fullview.js", "deactivate"]
+}

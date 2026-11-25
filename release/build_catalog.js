@@ -1,215 +1,314 @@
 #!/usr/bin/env node
-'use strict';
 /**
- * release/build_catalog.js - Build & verify MGU Store tarball + catalog.json (Schema 2) + mgu-store.json.
+ * Build release packages (id7_cockpit_plus app + cockpit-fullview tool) and
+ * generate official MGU Store Schema 2 `catalog.json` + `mgu-store.json`.
  *
  * Usage:
- *   node release/build_catalog.js --repo <owner/repo> [--tag v0.9.3] [--skip-build] [--dry-run]
+ *   node release/build_catalog.js --repo <owner/repo> [--tag v0.9.3] [--dry-run]
  */
+'use strict';
 
-const assert = require('assert');
-const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
-const { execFileSync } = require('child_process');
+const crypto = require('crypto');
+const zlib = require('zlib');
+const childProcess = require('child_process');
 
 const ROOT = path.resolve(__dirname, '..');
-const APP_ID = 'id7_cockpit_plus';
-const APP_DIR = path.join(ROOT, 'apps', APP_ID);
-const DIST_DIR = path.join(ROOT, 'dist');
+const APP_DIR = path.join(ROOT, 'apps', 'id7_cockpit_plus');
+const TOOL_DIR = path.join(ROOT, 'tools', 'cockpit-fullview');
 const BUILD_PY = path.join(ROOT, 'vendor', 'cauliflowermossgrape-idrive7-apps', 'kit', 'tools', 'build.py');
-const MAX_TAR_BYTES = 32 * 1024 * 1024;
+const DIST_DIR = path.join(ROOT, 'dist');
 
 function parseArgs(argv) {
-    const args = { repo: process.env.GITHUB_REPOSITORY || 'Hyperionism/idrive7-cockpit-plus', tag: '', skipBuild: false, dryRun: false };
-    for (let i = 2; i < argv.length; i++) {
-        const a = argv[i];
-        if (a === '--repo' && argv[i + 1]) { args.repo = argv[++i]; }
-        else if (a === '--tag' && argv[i + 1]) { args.tag = argv[++i]; }
-        else if (a === '--skip-build') { args.skipBuild = true; }
-        else if (a === '--dry-run') { args.dryRun = true; }
-    }
-    return args;
+  const opts = {
+    repo: process.env.GITHUB_REPOSITORY || 'Hyperionism/idrive7-cockpit-plus',
+    tag: '',
+    dryRun: false
+  };
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === '--repo' && argv[i + 1]) opts.repo = argv[++i];
+    else if (a === '--tag' && argv[i + 1]) opts.tag = argv[++i];
+    else if (a === '--dry-run') opts.dryRun = true;
+  }
+  return opts;
 }
 
-function findPython() {
-    const candidates = process.platform === 'win32'
-        ? [
-            'python3', 'python', 'py',
-            path.join(process.env.LOCALAPPDATA || '', 'Python', 'bin', 'python.exe'),
-            path.join(process.env.LOCALAPPDATA || '', 'Python', 'bin', 'python3.exe'),
-        ]
-        : ['python3', 'python'];
-    for (let i = 0; i < candidates.length; i++) {
-        if (!candidates[i]) continue;
-        try {
-            const out = execFileSync(candidates[i], ['--version'], { stdio: ['ignore', 'pipe', 'pipe'] }).toString('utf8').trim();
-            if (/Python 3/i.test(out)) return candidates[i];
-        } catch (e) { /* try next */ }
-    }
-    return null;
-}
-
-function listTarEntries(tgzPath) {
-    const cmd = process.platform === 'win32' ? 'tar.exe' : 'tar';
-    const out = execFileSync(cmd, ['-ztf', tgzPath], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
-    return out.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+function sha256Buffer(buf) {
+  return crypto.createHash('sha256').update(buf).digest('hex');
 }
 
 function sha256File(filePath) {
-    const h = crypto.createHash('sha256');
-    h.update(fs.readFileSync(filePath));
-    return h.digest('hex');
+  return sha256Buffer(fs.readFileSync(filePath));
 }
 
-function patchRepoLinkIfPlaceholder(appJsonPath, repo) {
-    if (!repo || repo.indexOf('OWNER/') === 0) return false;
-    const raw = fs.readFileSync(appJsonPath, 'utf8');
-    const parsed = JSON.parse(raw);
-    const want = 'github.com/' + repo;
-    if (parsed.repoLink && parsed.repoLink.indexOf('OWNER/') >= 0 && parsed.repoLink !== want) {
-        parsed.repoLink = want;
-        fs.writeFileSync(appJsonPath, JSON.stringify(parsed, null, 2) + '\n', 'utf8');
-        return true;
+function findPython() {
+  const candidates = [];
+  if (process.env.PYTHON) candidates.push({ cmd: process.env.PYTHON, args: [] });
+  if (process.platform === 'win32') {
+    if (process.env.LOCALAPPDATA) {
+      const localBin = path.join(process.env.LOCALAPPDATA, 'Python', 'bin', 'python.exe');
+      if (fs.existsSync(localBin)) candidates.push({ cmd: localBin, args: [] });
     }
-    return false;
+    candidates.push({ cmd: 'python', args: [] });
+    candidates.push({ cmd: 'py', args: ['-3'] });
+  } else {
+    candidates.push({ cmd: 'python3', args: [] });
+    candidates.push({ cmd: 'python', args: [] });
+  }
+  for (const c of candidates) {
+    const res = childProcess.spawnSync(c.cmd, [...c.args, '--version'], { encoding: 'utf8' });
+    if (res.status === 0 && /Python 3\./.test((res.stdout || '') + (res.stderr || ''))) {
+      return c;
+    }
+  }
+  throw new Error('Python 3 executable not found (set PYTHON env var or add python3 to PATH)');
+}
+
+function readTarEntries(tgzPath) {
+  const gz = fs.readFileSync(tgzPath);
+  const raw = zlib.gunzipSync(gz);
+  const entries = new Map();
+  let off = 0;
+  while (off + 512 <= raw.length) {
+    const hdr = raw.subarray(off, off + 512);
+    off += 512;
+    if (hdr.every((b) => b === 0)) break;
+    const nameRaw = hdr.subarray(0, 100).toString('utf8').replace(/\0.*$/, '');
+    const prefix = hdr.subarray(345, 500).toString('utf8').replace(/\0.*$/, '');
+    const fullName = (prefix ? prefix + '/' + nameRaw : nameRaw).replace(/^\.\//, '');
+    const sizeStr = hdr.subarray(124, 136).toString('utf8').replace(/\0.*$/, '').trim();
+    const size = sizeStr ? parseInt(sizeStr, 8) : 0;
+    const typeFlag = String.fromCharCode(hdr[156] || 48);
+    const data = size > 0 ? raw.subarray(off, off + size) : Buffer.alloc(0);
+    if (size > 0) {
+      off += Math.ceil(size / 512) * 512;
+    }
+    if (typeFlag === '0' || typeFlag === '\0') {
+      entries.set(fullName, Buffer.from(data));
+    }
+  }
+  return entries;
 }
 
 function verifyPackage(stageDir, tgzPath, appSpec) {
-    const srcDir = fs.existsSync(path.join(stageDir, 'source', 'package.json'))
-        ? path.join(stageDir, 'source')
-        : stageDir;
-    const stagePkgPath = path.join(srcDir, 'package.json');
-    assert(fs.existsSync(stagePkgPath), 'Missing staged package.json: ' + stagePkgPath);
-    const pkg = JSON.parse(fs.readFileSync(stagePkgPath, 'utf8'));
-    assert.strictEqual(pkg.private, false, 'Staged package.json MUST have private: false for MGU Store');
-    const mainRel = pkg.main || 'javascript/app.js';
-    assert(fs.existsSync(path.join(srcDir, mainRel)), 'Missing staged main entrypoint: ' + mainRel);
-    const manifestRel = pkg.oapAppSettings && pkg.oapAppSettings.someipManifest;
-    assert(manifestRel && fs.existsSync(path.join(srcDir, manifestRel)), 'Missing oapAppSettings.someipManifest: ' + manifestRel);
+  const entries = readTarEntries(tgzPath);
+  const names = Array.from(entries.keys());
+  const required = [
+    'package/package.json',
+    'package/manifest.json',
+    'package/javascript/app.js'
+  ];
+  for (const r of required) {
+    if (!names.includes(r)) {
+      throw new Error(`Missing required file in OAP app package: ${r} (got ${names.slice(0, 8).join(', ')})`);
+    }
+  }
+  const hasSdk = names.some((f) => f.includes('oap-sdk'));
+  if (hasSdk) {
+    throw new Error('Release package must not bundle @oap/sdk (check --omit-sdk)');
+  }
+  const sourcePkgPath = path.join(stageDir, 'source', 'package.json');
+  if (fs.existsSync(sourcePkgPath) && appSpec && appSpec.id) {
+    const pkg = JSON.parse(fs.readFileSync(sourcePkgPath, 'utf8'));
+    if (pkg.name !== appSpec.id) {
+      throw new Error(`Package name mismatch: ${pkg.name} !== ${appSpec.id}`);
+    }
+  }
+  return {
+    size: fs.statSync(tgzPath).size,
+    entryCount: names.length,
+    entries: names
+  };
+}
 
-    assert(fs.existsSync(tgzPath), 'Missing tarball: ' + tgzPath);
-    const stat = fs.statSync(tgzPath);
-    assert(stat.size > 0 && stat.size <= MAX_TAR_BYTES, 'Tarball size invalid: ' + stat.size);
+function verifyToolPackage(tgzPath) {
+  const entries = readTarEntries(tgzPath);
+  if (!entries.has('component.json')) {
+    throw new Error('Tool archive missing root component.json');
+  }
+  const comp = JSON.parse(entries.get('component.json').toString('utf8'));
+  if (comp.kind !== 'tool') throw new Error(`Expected tool kind, got ${comp.kind}`);
+  if (!/^[a-z0-9][a-z0-9-]*$/.test(comp.id)) throw new Error(`Invalid tool id: ${comp.id}`);
+  if (!Array.isArray(comp.files) || comp.files.length === 0) throw new Error('Tool files[] must be non-empty');
+  for (const f of comp.files) {
+    const tarKey = `files/${f.path}`;
+    if (!entries.has(tarKey)) throw new Error(`Tool archive missing ${tarKey}`);
+    const actualSha = sha256Buffer(entries.get(tarKey));
+    if (actualSha !== f.sha256) {
+      throw new Error(`SHA-256 mismatch for ${tarKey}: expected ${f.sha256}, got ${actualSha}`);
+    }
+  }
+  return comp;
+}
 
-    const entries = listTarEntries(tgzPath).map((e) => e.replace(/^\.\//, ''));
-    const hasEntry = (rel) => entries.some((e) => e === rel || e === ('package/' + rel) || e.endsWith('/' + rel));
-    assert(hasEntry('package.json'), 'Tarball must contain package.json');
-    assert(hasEntry(mainRel), 'Tarball must contain main entrypoint: ' + mainRel);
-    assert(hasEntry(manifestRel), 'Tarball must contain SOME/IP manifest: ' + manifestRel);
-    const badSdk = entries.filter((e) => /(^|\/)oap-sdk(\/|$)/i.test(e));
-    assert.strictEqual(badSdk.length, 0, 'Tarball MUST NOT bundle proprietary oap-sdk: ' + badSdk.join(', '));
-
+function buildToolArchive(py, outTgz) {
+  const compPath = path.join(TOOL_DIR, 'component.json');
+  const comp = JSON.parse(fs.readFileSync(compPath, 'utf8'));
+  comp.files = (comp.files || []).map((f) => {
+    const filePath = path.join(TOOL_DIR, 'files', f.path);
+    if (!fs.existsSync(filePath)) {
+      throw new Error(`Tool payload file missing: ${filePath}`);
+    }
     return {
-        size: stat.size,
-        sha256: sha256File(tgzPath),
-        entryCount: entries.length,
-        version: pkg.version || appSpec.version,
+      path: f.path,
+      mode: f.mode || '0644',
+      sha256: sha256File(filePath)
     };
+  });
+
+  const pyScript = [
+    'import json, os, sys, tarfile, io',
+    'comp = json.loads(sys.argv[1])',
+    'tool_dir = sys.argv[2]',
+    'out_tgz = sys.argv[3]',
+    'comp_bytes = (json.dumps(comp, indent=2) + "\\n").encode("utf-8")',
+    'with tarfile.open(out_tgz, "w:gz", format=tarfile.USTAR_FORMAT) as tf:',
+    '    ti = tarfile.TarInfo("component.json")',
+    '    ti.size = len(comp_bytes)',
+    '    ti.mode = 0o644',
+    '    ti.mtime = 0',
+    '    ti.uid = 0',
+    '    ti.gid = 0',
+    '    tf.addfile(ti, io.BytesIO(comp_bytes))',
+    '    for f in comp["files"]:',
+    '        src = os.path.join(tool_dir, "files", f["path"])',
+    '        data = open(src, "rb").read()',
+    '        fi = tarfile.TarInfo("files/" + f["path"].replace("\\\\", "/"))',
+    '        fi.size = len(data)',
+    '        fi.mode = int(f.get("mode", "0644"), 8)',
+    '        fi.mtime = 0',
+    '        fi.uid = 0',
+    '        fi.gid = 0',
+    '        tf.addfile(fi, io.BytesIO(data))'
+  ].join('\n');
+
+  const res = childProcess.spawnSync(
+    py.cmd,
+    [...py.args, '-c', pyScript, JSON.stringify(comp), TOOL_DIR, outTgz],
+    { encoding: 'utf8' }
+  );
+  if (res.status !== 0) {
+    throw new Error(`Failed to pack tool archive:\n${res.stdout || ''}\n${res.stderr || ''}`);
+  }
+  return comp;
 }
 
 function main() {
-    const args = parseArgs(process.argv);
-    const appJsonPath = path.join(APP_DIR, 'app.json');
-    const appSpec = JSON.parse(fs.readFileSync(appJsonPath, 'utf8'));
-    const version = String(appSpec.version || '0.9.3');
-    const tag = args.tag || ('v' + version);
-    const owner = (args.repo.split('/')[0] || 'OWNER').trim();
+  const opts = parseArgs(process.argv.slice(2));
+  const appManifest = JSON.parse(fs.readFileSync(path.join(APP_DIR, 'app.json'), 'utf8'));
+  const tag = opts.tag || `v${appManifest.version}`;
+  const py = findPython();
 
-    if (!args.dryRun && args.repo && args.repo.indexOf('OWNER/') !== 0) {
-        patchRepoLinkIfPlaceholder(appJsonPath, args.repo);
-    }
+  fs.mkdirSync(DIST_DIR, { recursive: true });
 
-    if (!args.skipBuild) {
-        const py = findPython();
-        if (!py) {
-            throw new Error('Python 3 not found on PATH; cannot run build.py (use --skip-build if dist/ already exists).');
-        }
-        execFileSync(py, [BUILD_PY, '--app-root', ROOT, '--omit-sdk', APP_ID], {
-            cwd: ROOT,
-            stdio: 'inherit',
-        });
-    }
+  // 1. Build Cockpit+ OAP app tarball (--omit-sdk)
+  const buildArgs = [...py.args, BUILD_PY, '--app-root', ROOT, '--omit-sdk', appManifest.id];
+  const buildRes = childProcess.spawnSync(py.cmd, buildArgs, { cwd: ROOT, encoding: 'utf8' });
+  if (buildRes.status !== 0) {
+    throw new Error(`build.py failed:\n${buildRes.stdout || ''}\n${buildRes.stderr || ''}`);
+  }
 
-    const stageDir = path.join(DIST_DIR, APP_ID);
-    const tgzName = APP_ID + '@' + version + '.tgz';
-    const tgzPath = path.join(DIST_DIR, tgzName);
-    const verInfo = verifyPackage(stageDir, tgzPath, appSpec);
+  const appStageDir = path.join(DIST_DIR, appManifest.id);
+  const appTgzName = `${appManifest.id}@${appManifest.version}.tgz`;
+  const appTgzPath = path.join(DIST_DIR, appTgzName);
+  if (!fs.existsSync(appTgzPath)) {
+    throw new Error(`Expected tarball not produced: ${appTgzPath}`);
+  }
+  const appVerified = verifyPackage(appStageDir, appTgzPath, appManifest);
 
-    const iconSrc = path.join(APP_DIR, 'icon.png');
-    const iconName = APP_ID + '.png';
-    const iconDist = path.join(DIST_DIR, iconName);
-    assert(fs.existsSync(iconSrc), 'Missing app icon: ' + iconSrc);
-    fs.copyFileSync(iconSrc, iconDist);
+  // 2. Build cockpit-fullview companion root tool tarball
+  const rawTool = JSON.parse(fs.readFileSync(path.join(TOOL_DIR, 'component.json'), 'utf8'));
+  const toolTgzName = `${rawTool.id}@${rawTool.version}.tgz`;
+  const toolTgzPath = path.join(DIST_DIR, toolTgzName);
+  const toolManifest = buildToolArchive(py, toolTgzPath);
+  verifyToolPackage(toolTgzPath);
 
-    const baseDl = 'https://github.com/' + args.repo + '/releases/download/';
-    const relUrl = baseDl + encodeURIComponent(tag) + '/' + encodeURIComponent(tgzName);
-    const iconUrl = baseDl + encodeURIComponent(tag) + '/' + encodeURIComponent(iconName);
-    const homepage = 'https://github.com/' + args.repo;
-    const nowIso = new Date().toISOString();
+  // 3. Copy app icon & compute SHA-256 checksums
+  const iconName = `${appManifest.id}.png`;
+  const iconSrc = path.join(APP_DIR, 'icon.png');
+  const iconDest = path.join(DIST_DIR, iconName);
+  fs.copyFileSync(iconSrc, iconDest);
 
-    const mguStoreMeta = {
-        id: APP_ID,
-        name: APP_ID,
-        title: appSpec.title || 'Cockpit+',
-        description: appSpec.description,
-        version,
-        category: 'apps',
-        author: owner,
-        license: appSpec.license || 'GPL-3.0-only',
-        mguHmi: appSpec.mguHmi || ['ID7'],
-        requires: appSpec.requires || { 'cluster-render': '0.4.0' },
-        asset: tgzName,
-        icon: iconName,
-        sha256: verInfo.sha256,
-        size: verInfo.size,
-        homepage,
-    };
+  const iconSha = sha256File(iconDest);
+  const appTgzSha = sha256File(appTgzPath);
+  const appTgzSize = fs.statSync(appTgzPath).size;
+  const toolTgzSha = sha256File(toolTgzPath);
+  const toolTgzSize = fs.statSync(toolTgzPath).size;
 
-    const catalog = {
-        schema: 2,
-        updated: nowIso,
-        repository: args.repo,
-        components: {
-            [APP_ID]: {
-                id: APP_ID,
-                name: APP_ID,
-                title: appSpec.title || 'Cockpit+',
-                description: appSpec.description,
-                category: 'apps',
-                author: owner,
-                license: appSpec.license || 'GPL-3.0-only',
-                homepage,
-                mguHmi: appSpec.mguHmi || ['ID7'],
-                requires: appSpec.requires || { 'cluster-render': '0.4.0' },
-                icon: iconUrl,
-                latest: version,
-                versions: {
-                    [version]: {
-                        version,
-                        url: relUrl,
-                        tarball: relUrl,
-                        icon: iconUrl,
-                        sha256: verInfo.sha256,
-                        size: verInfo.size,
-                        mguHmi: appSpec.mguHmi || ['ID7'],
-                        requires: appSpec.requires || { 'cluster-render': '0.4.0' },
-                        publishedAt: nowIso,
-                    },
-                },
-            },
+  const baseReleaseUrl = `https://github.com/${opts.repo}/releases/download/${tag}`;
+
+  // Official MGU Store Schema 2 catalog.json (components array)
+  const catalog = {
+    schema: 2,
+    components: [
+      {
+        id: toolManifest.id,
+        kind: 'tool',
+        title: toolManifest.title,
+        description: toolManifest.description,
+        author: toolManifest.author,
+        version: toolManifest.version,
+        artifact: {
+          name: toolTgzName,
+          size: toolTgzSize,
+          sha256: toolTgzSha,
+          url: `${baseReleaseUrl}/${toolTgzName}`
         },
-    };
+        uninstallable: toolManifest.uninstallable !== false,
+        mguHmi: toolManifest.mguHmi || ['ID7']
+      },
+      {
+        id: appManifest.id,
+        kind: 'app',
+        title: appManifest.title,
+        description: appManifest.description,
+        author: appManifest.author,
+        version: appManifest.version,
+        artifact: {
+          name: appTgzName,
+          size: appTgzSize,
+          sha256: appTgzSha,
+          url: `${baseReleaseUrl}/${appTgzName}`
+        },
+        uninstallable: true,
+        mguHmi: appManifest.mguHmi || ['ID7'],
+        requires: appManifest.requires || {},
+        icon: iconName,
+        iconSha256: iconSha
+      }
+    ]
+  };
 
-    fs.writeFileSync(path.join(DIST_DIR, 'mgu-store.json'), JSON.stringify(mguStoreMeta, null, 2) + '\n', 'utf8');
-    fs.writeFileSync(path.join(DIST_DIR, 'catalog.json'), JSON.stringify(catalog, null, 2) + '\n', 'utf8');
+  // MGU Store legacy/direct release sidecar metadata
+  const mguStoreMeta = {
+    apps: {
+      [appManifest.id]: {
+        title: appManifest.title,
+        description: appManifest.description,
+        author: appManifest.author,
+        icon: iconName,
+        iconSha256: iconSha
+      }
+    }
+  };
 
-    console.log('[release] Verified ' + tgzName + ' (' + verInfo.size + ' bytes, ' + verInfo.entryCount + ' entries, sha256=' + verInfo.sha256.slice(0, 12) + '...)');
-    console.log('[release] Generated dist/mgu-store.json and dist/catalog.json (Schema 2) for ' + args.repo + ' tag ' + tag);
+  fs.writeFileSync(path.join(DIST_DIR, 'catalog.json'), JSON.stringify(catalog, null, 2) + '\n', 'utf8');
+  fs.writeFileSync(path.join(DIST_DIR, 'mgu-store.json'), JSON.stringify(mguStoreMeta, null, 2) + '\n', 'utf8');
+
+  console.log(`[build_catalog] Built ${appTgzName} (${appTgzSize} B, ${appVerified.entryCount} files, sha256=${appTgzSha.slice(0, 12)}...)`);
+  console.log(`[build_catalog] Built ${toolTgzName} (${toolTgzSize} B, sha256=${toolTgzSha.slice(0, 12)}...)`);
+  console.log(`[build_catalog] Schema 2 catalog.json & mgu-store.json written for ${opts.repo} @ ${tag}${opts.dryRun ? ' (dry-run)' : ''}`);
 }
 
 if (require.main === module) {
-    main();
+  main();
 }
 
-module.exports = { verifyPackage, listTarEntries };
+module.exports = {
+  readTarEntries,
+  verifyPackage,
+  verifyToolPackage,
+  buildToolArchive
+};

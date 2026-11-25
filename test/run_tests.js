@@ -3177,6 +3177,7 @@ function inBox(x, y, box) {
         assert.strictEqual(appSpec.title, 'Cockpit+');
         assert.strictEqual(appSpec.loggingId, 'OA7C');
         assert.strictEqual(appSpec.requires && appSpec.requires['cluster-render'], '0.4.0');
+        assert.strictEqual(appSpec.requires && appSpec.requires['cockpit-fullview'], '1.0.0');
         assert(!appSpec.npmFiles, 'jpeg_decoder.js must be bundled directly without npmFiles');
         assert(fs.existsSync(path.join(APP_DIR, 'jpeg_decoder.js')));
 
@@ -3185,11 +3186,13 @@ function inBox(x, y, box) {
 
         const mguRepo = JSON.parse(fs.readFileSync(path.join(ROOT, 'mgu-repo.json'), 'utf8'));
         assert.strictEqual(mguRepo.schema, 1);
-        assert(Array.isArray(mguRepo.components) && mguRepo.components.length === 1);
-        assert.strictEqual(mguRepo.components[0].id, 'id7_cockpit_plus');
-        assert.strictEqual(mguRepo.components[0].version, appSpec.version);
-        assert(fs.existsSync(path.join(ROOT, mguRepo.components[0].icon)));
-        assert(fs.existsSync(path.join(ROOT, mguRepo.components[0].build.python)));
+        assert(Array.isArray(mguRepo.components) && mguRepo.components.length === 2);
+        const repoTool = mguRepo.components.find((c) => c.id === 'cockpit-fullview');
+        const repoApp = mguRepo.components.find((c) => c.id === 'id7_cockpit_plus');
+        assert(repoTool && repoTool.kind === 'tool' && fs.existsSync(path.join(ROOT, repoTool.path, 'component.json')));
+        assert(repoApp && repoApp.version === appSpec.version);
+        assert(fs.existsSync(path.join(ROOT, repoApp.icon)));
+        assert(fs.existsSync(path.join(ROOT, repoApp.build.python)));
 
         const pkgJson = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
         assert.strictEqual(pkgJson.name, 'idrive7-cockpit-plus');
