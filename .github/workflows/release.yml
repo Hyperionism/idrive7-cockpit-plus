@@ -17,7 +17,7 @@ permissions:
 
 jobs:
   release:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -25,17 +25,19 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      - name: Determine release version & tag
+      - name: Determine release version, tag & pinned upstream SHAs
         id: meta
         run: |
           VER=$(node -e "console.log(require('./apps/id7_cockpit_plus/app.json').version)")
+          IDRIVE_SHA=$(node -e "console.log(require('./native/fullview-patch.js').UPSTREAM_PINS.idriveAppsCommit)")
+          MGU_STORE_SHA=$(node -e "console.log(require('./native/fullview-patch.js').UPSTREAM_PINS.mguStoreCommit)")
           INPUT_TAG="${{ github.event.inputs.tag }}"
           if [ -n "$INPUT_TAG" ]; then
             TAG="$INPUT_TAG"
@@ -46,6 +48,8 @@ jobs:
           fi
           echo "version=$VER" >> "$GITHUB_OUTPUT"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "idrive_sha=$IDRIVE_SHA" >> "$GITHUB_OUTPUT"
+          echo "mgu_store_sha=$MGU_STORE_SHA" >> "$GITHUB_OUTPUT"
           echo "Release version=$VER tag=$TAG repo=${{ github.repository }}"
 
       - name: Stamp repository link & build stub-SDK test bundle
@@ -59,41 +63,70 @@ jobs:
           "
           python3 vendor/cauliflowermossgrape-idrive7-apps/kit/tools/build.py --app-root . --stub-sdk id7_cockpit_plus
 
-      - name: Run full verification suite before publishing
+      - name: Run full local verification suite
         env:
           REQUIRE_DIST: "1"
         run: |
           node test/run_tests.js
           node test/fullview_companion_test.js
 
-      - name: Build clean no-SDK release packages & Schema 2 catalog
+      - name: Fetch, patch & build open-source native MGU components (cluster-render, waze-on-cluster, mgu-render)
+        run: |
+          mkdir -p /tmp/up/idrive-apps /tmp/up/mgu-store
+          git -C /tmp/up/idrive-apps init -q
+          git -C /tmp/up/idrive-apps fetch -q --depth 1 https://github.com/robertnisipeanu/idrive-apps.git "${{ steps.meta.outputs.idrive_sha }}"
+          git -C /tmp/up/idrive-apps checkout -q -B main FETCH_HEAD
+
+          git -C /tmp/up/mgu-store init -q
+          git -C /tmp/up/mgu-store fetch -q --depth 1 https://github.com/robertnisipeanu/mgu-store.git "${{ steps.meta.outputs.mgu_store_sha }}"
+          git -C /tmp/up/mgu-store checkout -q -B main FETCH_HEAD
+
+          node native/fullview-patch.js --idrive-apps /tmp/up/idrive-apps --mgu-store /tmp/up/mgu-store
+
+          git -C /tmp/up/idrive-apps -c user.name="ci" -c user.email="ci@local" commit -q -am "Apply Cockpit+ FullView 1632x720 patch"
+          git -C /tmp/up/mgu-store -c user.name="ci" -c user.email="ci@local" commit -q --allow-empty -am "Prepare mgu-render release"
+
+          # Verify C++ & patch unit tests after applying FullView patches
+          make -C /tmp/up/idrive-apps/native/cluster-render test
+          make -C /tmp/up/idrive-apps/native/waze-on-cluster test
+
+          # Build head-unit Ubuntu 18.04 Docker targets & MGU Store tarballs
+          (cd /tmp/up/idrive-apps && node release/release.js build cluster-render waze-on-cluster robertn_waze_cluster)
+          (cd /tmp/up/mgu-store && node release/release.js build mgu-render)
+          ls -lh /tmp/up/idrive-apps/release/out /tmp/up/mgu-store/release/out
+
+      - name: Build unified no-SDK release packages & Schema 2 catalog
         run: |
           rm -rf dist/
-          node release/build_catalog.js --repo "${{ github.repository }}" --tag "${{ steps.meta.outputs.tag }}"
+          node release/build_catalog.js \
+            --repo "${{ github.repository }}" \
+            --tag "${{ steps.meta.outputs.tag }}" \
+            --extra-catalog "/tmp/up/idrive-apps/release/out/catalog.json,/tmp/up/mgu-store/release/out/catalog.json"
           ls -lh dist/
 
       - name: Create or update versioned GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          shopt -s nullglob
           TAG="${{ steps.meta.outputs.tag }}"
           VER="${{ steps.meta.outputs.version }}"
-          APP_TGZ="dist/id7_cockpit_plus@${VER}.tgz"
-          TOOL_VER=$(node -e "console.log(require('./tools/cockpit-fullview/component.json').version)")
-          TOOL_TGZ="dist/cockpit-fullview@${TOOL_VER}.tgz"
-          NOTES="Cockpit+ v${VER} (id7_cockpit_plus) + Cockpit+ FullView Companion ${TOOL_VER} (cockpit-fullview) for BMW iDrive 7 (ID7 / KOMBI4 + HUD). Pure 1632x720 FullView CarPlay/AMAP/Baidu map + zero-overlap Cockpit+ overlays."
+          ASSETS=(dist/*.tgz dist/*.png dist/mgu-store.json dist/catalog.json)
+          NOTES="Cockpit+ v${VER} full open-source FullView 1632x720 suite for BMW iDrive 7 (cluster-render 0.8.14 + waze-on-cluster 0.14.16 + robertn_waze_cluster 0.6.16 + mgu-render 0.6.26 + cockpit-fullview 1.0.0 + id7_cockpit_plus ${VER}). Zero paid components required."
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" "$APP_TGZ" "$TOOL_TGZ" dist/mgu-store.json dist/catalog.json dist/id7_cockpit_plus.png --clobber
+            gh release upload "$TAG" "${ASSETS[@]}" --clobber
           else
-            gh release create "$TAG" "$APP_TGZ" "$TOOL_TGZ" dist/mgu-store.json dist/catalog.json dist/id7_cockpit_plus.png --title "Cockpit+ v${VER}" --notes "$NOTES"
+            gh release create "$TAG" "${ASSETS[@]}" --title "Cockpit+ v${VER} (FullView Stack)" --notes "$NOTES"
           fi
 
       - name: Create or update floating catalog release for MGU Store
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          shopt -s nullglob
+          ICONS=(dist/*.png)
           if gh release view catalog >/dev/null 2>&1; then
-            gh release upload catalog dist/catalog.json dist/id7_cockpit_plus.png --clobber
+            gh release upload catalog dist/catalog.json "${ICONS[@]}" --clobber
           else
-            gh release create catalog dist/catalog.json dist/id7_cockpit_plus.png --title "Cockpit+ MGU Store Catalog" --notes "Floating Schema 2 catalog for MGU Store (Releases feed)."
+            gh release create catalog dist/catalog.json "${ICONS[@]}" --title "Cockpit+ MGU Store Catalog" --notes "Unified Schema 2 catalog for MGU Store (Releases feed)."
           fi
