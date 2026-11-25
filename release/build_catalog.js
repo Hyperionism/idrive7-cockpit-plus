@@ -69,23 +69,27 @@ function patchRepoLinkIfPlaceholder(appJsonPath, repo) {
 }
 
 function verifyPackage(stageDir, tgzPath, appSpec) {
-    const stagePkgPath = path.join(stageDir, 'package.json');
+    const srcDir = fs.existsSync(path.join(stageDir, 'source', 'package.json'))
+        ? path.join(stageDir, 'source')
+        : stageDir;
+    const stagePkgPath = path.join(srcDir, 'package.json');
     assert(fs.existsSync(stagePkgPath), 'Missing staged package.json: ' + stagePkgPath);
     const pkg = JSON.parse(fs.readFileSync(stagePkgPath, 'utf8'));
     assert.strictEqual(pkg.private, false, 'Staged package.json MUST have private: false for MGU Store');
-    const mainRel = pkg.main || 'source/main.js';
-    assert(fs.existsSync(path.join(stageDir, mainRel)), 'Missing staged main entrypoint: ' + mainRel);
+    const mainRel = pkg.main || 'javascript/app.js';
+    assert(fs.existsSync(path.join(srcDir, mainRel)), 'Missing staged main entrypoint: ' + mainRel);
     const manifestRel = pkg.oapAppSettings && pkg.oapAppSettings.someipManifest;
-    assert(manifestRel && fs.existsSync(path.join(stageDir, manifestRel)), 'Missing oapAppSettings.someipManifest: ' + manifestRel);
+    assert(manifestRel && fs.existsSync(path.join(srcDir, manifestRel)), 'Missing oapAppSettings.someipManifest: ' + manifestRel);
 
     assert(fs.existsSync(tgzPath), 'Missing tarball: ' + tgzPath);
     const stat = fs.statSync(tgzPath);
     assert(stat.size > 0 && stat.size <= MAX_TAR_BYTES, 'Tarball size invalid: ' + stat.size);
 
-    const entries = listTarEntries(tgzPath);
-    assert(entries.some((e) => e.endsWith('package.json')), 'Tarball must contain package.json');
-    assert(entries.some((e) => e.endsWith('source/main.js')), 'Tarball must contain source/main.js');
-    assert(entries.some((e) => e.endsWith('source/manifest.json')), 'Tarball must contain source/manifest.json');
+    const entries = listTarEntries(tgzPath).map((e) => e.replace(/^\.\//, ''));
+    const hasEntry = (rel) => entries.some((e) => e === rel || e === ('package/' + rel) || e.endsWith('/' + rel));
+    assert(hasEntry('package.json'), 'Tarball must contain package.json');
+    assert(hasEntry(mainRel), 'Tarball must contain main entrypoint: ' + mainRel);
+    assert(hasEntry(manifestRel), 'Tarball must contain SOME/IP manifest: ' + manifestRel);
     const badSdk = entries.filter((e) => /(^|\/)oap-sdk(\/|$)/i.test(e));
     assert.strictEqual(badSdk.length, 0, 'Tarball MUST NOT bundle proprietary oap-sdk: ' + badSdk.join(', '));
 
@@ -197,4 +201,8 @@ function main() {
     console.log('[release] Generated dist/mgu-store.json and dist/catalog.json (Schema 2) for ' + args.repo + ' tag ' + tag);
 }
 
-main();
+if (require.main === module) {
+    main();
+}
+
+module.exports = { verifyPackage, listTarEntries };
