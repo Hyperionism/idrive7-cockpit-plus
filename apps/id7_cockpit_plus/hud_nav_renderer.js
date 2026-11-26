@@ -12,6 +12,7 @@
  */
 
 const { withAlpha } = require('./kit/canvas');
+const { t: tr } = require('./kit/i18n');
 const {
     drawArrow,
     laneWindow,
@@ -214,6 +215,75 @@ function wrapAscii(cv, s, size, w, opts, lines) {
     else if (cur) words.unshift(cur);
     if (words.length && out.length) {
         out[out.length - 1] = fitAscii(cv, out[out.length - 1] + ' ' + words.join(' '), size, w, opts);
+    }
+    return out;
+}
+
+/**
+ * Clean Unicode/CJK-safe display string for HUD street names (preserves Chinese/Japanese/Korean
+ * characters rendered via baked cjk_gothic.pack while still normalizing control chars & dashes).
+ */
+function cleanDisplayText(s) {
+    return String(s || '')
+        .replace(/[\u0000-\u001f\u200b-\u200f\u2028-\u202e\u2066-\u2069\ufeff\x7f]/g, '')
+        .replace(/[\s\u00a0\u2000-\u200a\u202f\u205f\u3000]+/g, ' ')
+        .replace(/[\u2013\u2014]/g, '-')
+        .replace(/\u2026/g, '...')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+function fitDisplayText(cv, s, size, w, opts) {
+    if (cv.textWidth(s, size, opts) <= w) return s;
+    const cps = Array.from(String(s || ''));
+    while (cps.length > 1 && cv.textWidth(cps.join('').trim() + '...', size, opts) > w) {
+        cps.pop();
+    }
+    return cps.length > 1 ? (cps.join('').trim() + '...') : '';
+}
+
+function wrapDisplayText(cv, s, size, w, opts, lines) {
+    const clean = cleanDisplayText(s);
+    if (!clean) return [];
+    if (cv.textWidth(clean, size, opts) <= w) return [clean];
+    const hasSpaces = /\s/.test(clean);
+    if (hasSpaces) {
+        const words = clean.split(/\s+/).filter(Boolean);
+        const out = [];
+        let cur = '';
+        const width = (t) => cv.textWidth(t, size, opts);
+        while (words.length && out.length < lines) {
+            const word = words[0];
+            const next = cur ? (cur + ' ' + word) : word;
+            if (width(next) <= w) { cur = next; words.shift(); continue; }
+            if (cur) { out.push(cur); cur = ''; continue; }
+            const cps = Array.from(word);
+            let n = cps.length;
+            while (n > 1 && width(cps.slice(0, n).join('')) > w) n--;
+            out.push(cps.slice(0, n).join(''));
+            words[0] = cps.slice(n).join('');
+            if (!words[0]) words.shift();
+        }
+        if (cur && out.length < lines) out.push(cur);
+        else if (cur) words.unshift(cur);
+        if (words.length && out.length) {
+            out[out.length - 1] = fitDisplayText(cv, out[out.length - 1] + ' ' + words.join(' '), size, w, opts);
+        }
+        return out;
+    }
+    const cps = Array.from(clean);
+    const out = [];
+    let idx = 0;
+    while (idx < cps.length && out.length < lines) {
+        if (out.length === lines - 1) {
+            out.push(fitDisplayText(cv, cps.slice(idx).join(''), size, w, opts));
+            break;
+        }
+        let end = idx + 1;
+        while (end <= cps.length && cv.textWidth(cps.slice(idx, end).join(''), size, opts) <= w) end++;
+        const take = Math.max(idx + 1, end - 1);
+        out.push(cps.slice(idx, take).join(''));
+        idx = take;
     }
     return out;
 }
@@ -493,7 +563,7 @@ function drawHudRoadBanner(cv, m) {
     if (!m) return false;
     const badge = m.exitBadge ? foldAscii(m.exitBadge) : '';
     const shields = Array.isArray(m.shields) ? m.shields.filter((s) => s && s.num).slice(0, 2) : [];
-    const road = m.road ? foldAscii(m.road) : '';
+    const road = m.road ? cleanDisplayText(m.road) : '';
     if (!badge && !shields.length && !road) return false;
 
     const col = [242, 245, 250, 255];
@@ -515,7 +585,7 @@ function drawHudRoadBanner(cv, m) {
         rSz = 22;
         if (cv.textWidth(rStr, rSz, ROPTS) > maxTextW) {
             rSz = 19;
-            rStr = fitAscii(cv, rStr, rSz, maxTextW, ROPTS);
+            rStr = fitDisplayText(cv, rStr, rSz, maxTextW, ROPTS);
         }
     }
     const textW = rStr ? cv.textWidth(rStr, rSz, ROPTS) : 0;
@@ -559,13 +629,13 @@ function drawHudNav(cv, m, opts) {
 
     const hideRoad = Boolean(o.hideRoad);
     const badge = !hideRoad && m.exitBadge ? foldAscii(m.exitBadge) : '';
-    const roadS = !hideRoad && m.road ? foldAscii(m.road) : '';
+    const roadS = !hideRoad && m.road ? cleanDisplayText(m.road) : '';
     const roadSingleSz = nL ? 22 : 24;
     const roadWrapSz = 19;
     const badgeW = badge ? measureExitBadge(cv, badge, 17) : 0;
     const line1Avail = maxRoadW - (badge ? badgeW + 8 : 0);
     const singleFits = Boolean(roadS) && cv.textWidth(roadS, roadSingleSz, ROPTS) <= line1Avail;
-    const roadLines = !roadS ? [] : (singleFits ? [roadS] : wrapAscii(cv, roadS, roadWrapSz, line1Avail, ROPTS, 2));
+    const roadLines = !roadS ? [] : (singleFits ? [roadS] : wrapDisplayText(cv, roadS, roadWrapSz, line1Avail, ROPTS, 2));
     const hasInlineHeader = Boolean(badge || roadLines.length > 0);
     if (hasInlineHeader) {
         if (roadLines.length <= 1) {
@@ -638,7 +708,7 @@ function drawHudNav(cv, m, opts) {
 
         if (th) {
             const ty = arrowCy + (stackedLayout ? 34 : 40);
-            const thenW = textOutline(cv, 'then', rx, ty, stackedLayout ? 18 : 19, unitCol, ROPTS);
+            const thenW = textOutline(cv, tr('then'), rx, ty, stackedLayout ? 18 : 19, unitCol, ROPTS);
             const ax = rx + thenW + 20;
             drawArrow(cv, th, ax, ty - 7, 0.42, col, dim);
             if (thGap) {
@@ -727,7 +797,7 @@ function drawHudNav(cv, m, opts) {
         if (th) {
             drawArrow(cv, m, 82, heroCy, hasInlineHeader ? 1.38 : 1.56, col, dim);
             const tCx = 198;
-            textOutline(cv, 'then', tCx, heroCy - 34, 20, unitCol, COPTS);
+            textOutline(cv, tr('then'), tCx, heroCy - 34, 20, unitCol, COPTS);
             drawArrow(cv, th, tCx, heroCy + 2, 0.66, col, dim);
             if (thGap) {
                 const gFit = fitAscii(cv, thGap, 20, 118, ROPTS);
@@ -803,6 +873,7 @@ module.exports = {
     hudRoadKey,
     hudNavKey,
     foldAscii,
+    cleanDisplayText,
     shapeOf,
     roundaboutGeom,
 };

@@ -11,7 +11,7 @@
 
 const mgu = require('./kit/mgu');
 const fontsMod = require('./kit/fonts');
-const { t, getLanguage } = require('./kit/i18n');
+const { t: tr, getLanguage } = require('./kit/i18n');
 const { installStockBmwFonts, getFontStatus } = require('./bmw_font');
 const { SignalHub } = require('./signals');
 const { EfficiencyTracker } = require('./efficiency');
@@ -20,7 +20,7 @@ const { OverlayRenderer } = require('./overlay_renderer');
 const { formatTemp, formatSpeed } = require('./units');
 
 function asciiOnly(str) {
-    const out = t(String(str == null ? '' : str));
+    const out = tr(String(str == null ? '' : str));
     if (getLanguage() === 'en') {
         return out.replace(/\u00B0/g, ' ').replace(/[^\x20-\x7e]/g, '');
     }
@@ -361,28 +361,33 @@ mgu.run({
             const hero = sum.hero || { value: '--', unit: '' };
             const enabled = settings.get('enabled') !== false;
 
-            if (renderer.slotStatus && renderer.slotStatus.conflictSlot) {
+            if (renderer.slotStatus && (renderer.slotStatus.conflictSlot || renderer.slotStatus.conflictScene)) {
+                const isScene = Boolean(renderer.slotStatus.conflictScene && !renderer.slotStatus.conflictSlot);
                 setTwoRow(
                     'STATUS_SUMMARY',
-                    'Action Needed: Revert cluster-render.local.conf (' + renderer.slotStatus.panelSlot + ')',
-                    'Slot 0x202 hides Power Gauge; run configure-cluster-slot.sh --revert for 0x203'
+                    isScene
+                        ? (tr('Action Needed: Stale cluster-render.local.conf') + ' (' + renderer.slotStatus.sceneId + ')')
+                        : (tr('Action Needed: Revert cluster-render.local.conf') + ' (' + renderer.slotStatus.panelSlot + ')'),
+                    isScene
+                        ? tr('panel_scene_id 0x010004f0 conflicts with map; reinstall cockpit-fullview or set 0x010004f8')
+                        : tr('Slot 0x202 hides Power Gauge; reinstall cockpit-fullview to restore 0x203')
                 );
                 return;
             }
 
-            const clusterNote = sum.showMapOverlay ? '  |  Map 0x100 (BC OK)'
-                : (sum.isCharging ? '  |  Charging (auto)'
-                    : (sum.hudYieldedToNav ? ('  |  HUD yielded (' + (sum.hudYieldReason || 'mini-map') + ')')
-                        : (sum.wocHudOverlay ? '  |  HUD over Waze'
-                            : (sum.showOwnHudNav ? '  |  HUD + Nav' : ''))));
-            const stateTag = !enabled ? 'Metrics Paused'
-                : (renderer.ready ? 'Metrics Active' : 'Waiting for cluster-render') +
-                  '  |  ' + (t.demo ? 'Demo' : 'Live') + ' ' + model.profile.mode.toUpperCase().replace('_', ' ') +
+            const clusterNote = sum.showMapOverlay ? ('  |  ' + tr('Map 0x100 (BC OK)'))
+                : (sum.isCharging ? ('  |  ' + tr('Charging (auto)'))
+                    : (sum.hudYieldedToNav ? ('  |  ' + tr('HUD yielded') + ' (' + (sum.hudYieldReason || 'mini-map') + ')')
+                        : (sum.wocHudOverlay ? ('  |  ' + tr('HUD over Waze'))
+                            : (sum.showOwnHudNav ? ('  |  ' + tr('HUD + Nav')) : ''))));
+            const stateTag = !enabled ? tr('Metrics Paused')
+                : (renderer.ready ? tr('Metrics Active') : tr('Waiting for cluster-render')) +
+                  '  |  ' + (t.demo ? tr('Demo') : tr('Live')) + ' ' + model.profile.mode.toUpperCase().replace('_', ' ') +
                   clusterNote;
 
             const socPart = (typeof t.soc === 'number' && isFinite(t.soc)) ? ('SOC ' + Math.round(t.soc) + '%')
-                : ('OIL ' + fmtTempAscii(t.oilTempC, units));
-            const gearPart = sum.isCharging ? 'Stage P' : (sum.inNormalD ? ('Gear D' + Math.round(t.gear)) : ('Stage ' + (t.stage || '--')));
+                : (tr('OIL') + ' ' + fmtTempAscii(t.oilTempC, units));
+            const gearPart = sum.isCharging ? (tr('Stage') + ' P') : (sum.inNormalD ? (tr('Gear') + ' D' + Math.round(t.gear)) : (tr('Stage') + ' ' + (t.stage || '--')));
             const detailLine = hero.value + ' ' + hero.unit +
                 '  |  ' + asciiOnly(sum.subText || '--') +
                 '  |  ' + socPart +
@@ -390,37 +395,37 @@ mgu.run({
 
             setTwoRow('STATUS_SUMMARY', stateTag, detailLine);
 
-            const targetNames = { both: 'Cluster + HUD', cluster: 'Cluster only', hud: 'HUD only' };
-            const genLine = (enabled ? 'Enabled' : 'Paused') + '  |  ' +
-                (targetNames[settings.get('displayTarget') || 'both'] || 'Cluster + HUD') +
-                '  |  Units: ' + units.system.toUpperCase();
-            setTwoRow('TAB_GENERAL', 'General', genLine);
+            const targetNames = { both: tr('Cluster + HUD'), cluster: tr('Cluster only'), hud: tr('HUD only') };
+            const genLine = (enabled ? tr('Enabled') : tr('Paused')) + '  |  ' +
+                (targetNames[settings.get('displayTarget') || 'both'] || tr('Cluster + HUD')) +
+                '  |  ' + tr('Units') + ': ' + units.system.toUpperCase();
+            setTwoRow('TAB_GENERAL', tr('General'), genLine);
 
             const rwParts = [];
-            if (settings.get('widgetMedia') !== false) rwParts.push('Media');
-            if (settings.get('widgetTrip') !== false) rwParts.push('Trip');
-            if (settings.get('widgetTpms') !== false) rwParts.push('Tires');
-            if (sum.isCharging) rwParts.push('Charging');
+            if (settings.get('widgetMedia') !== false) rwParts.push(tr('Media'));
+            if (settings.get('widgetTrip') !== false) rwParts.push(tr('Trip'));
+            if (settings.get('widgetTpms') !== false) rwParts.push(tr('Tires'));
+            if (sum.isCharging) rwParts.push(tr('Charging'));
             const clusExtras = [];
             if (settings.get('clusterLaneBar') !== false) clusExtras.push('5AU');
-            if (settings.get('clusterTurnCard') !== false) clusExtras.push('Turn');
+            if (settings.get('clusterTurnCard') !== false) clusExtras.push(tr('Turn'));
             if (settings.get('clusterEtaPill') !== false) clusExtras.push('ETA');
-            if (settings.get('clusterSpeedOverlay') !== false) clusExtras.push('Spd');
-            if (settings.get('cabinTempDisplay') !== false) clusExtras.push('Cabin');
+            if (settings.get('clusterSpeedOverlay') !== false) clusExtras.push(tr('Spd'));
+            if (settings.get('cabinTempDisplay') !== false) clusExtras.push(tr('Cabin'));
             if (settings.get('hvSocGauge') !== false && model.profile.vehicleType === 'phev') clusExtras.push('HV%');
-            const clusLine = (settings.get('clusterSlotMode') === 'map_only' ? 'Map 0x100' : 'Full Panel') +
-                '  |  Widgets: ' + (rwParts.length ? rwParts.join('+') : 'Off') +
+            const clusLine = (settings.get('clusterSlotMode') === 'map_only' ? tr('Map 0x100') : tr('Full Panel')) +
+                '  |  ' + tr('Widgets') + ': ' + (rwParts.length ? rwParts.join('+') : tr('Off')) +
                 (clusExtras.length ? ('  |  +' + clusExtras.join('/')) : '') +
-                '  |  Gear: ' + (settings.get('gearDisplay') || 'next_to_d');
-            setTwoRow('TAB_CLUSTER', 'Cluster', clusLine);
+                '  |  ' + tr('Gear') + ': ' + (settings.get('gearDisplay') || 'next_to_d');
+            setTwoRow('TAB_CLUSTER', tr('Cluster'), clusLine);
 
             const hwMode = settings.get('hudHeadway') || 'full';
-            const hudLine = 'Nav: ' + (settings.get('hudNavMode') || 'own_nav_minimap') +
-                '  |  Headway: ' + hwMode +
+            const hudLine = tr('Nav') + ': ' + (settings.get('hudNavMode') || 'own_nav_minimap') +
+                '  |  ' + tr('Headway') + ': ' + hwMode +
                 '  |  ' + (settings.get('hudLine1') || 'efficiency_gear') +
                 '/' + (settings.get('hudLine2') || 'power') +
                 '/' + (settings.get('hudLine3') || 'brake');
-            setTwoRow('TAB_HUD', 'HUD', hudLine);
+            setTwoRow('TAB_HUD', tr('HUD'), hudLine);
         }
 
         function updateDiagRows(model) {
@@ -432,11 +437,13 @@ mgu.run({
             const spd = formatSpeed(t.speedKmh, units);
             const diagStats = (hub.uds && hub.uds.stats) || {};
 
-            const connState = renderer.ready ? 'Connected' : (renderer.connected ? 'Handshake' : 'Disconnected');
+            const connState = renderer.ready ? tr('Connected') : (renderer.connected ? tr('Handshake') : tr('Disconnected'));
             const clusterModeNote = renderer.slotStatus.conflictSlot
                 ? (renderer.slotStatus.panelSlot + ' (BLOCKS POWER GAUGE - revert local.conf!)')
-                : (sum.showMapOverlay ? 'map 0x100 (BC widget OK)'
-                    : (sum.panelAllowed ? ('panel ' + renderer.slotStatus.panelSlot + ' [RW:' + (sum.rightWidgetPage || 'off') + ']') : 'cluster idle'));
+                : (renderer.slotStatus.conflictScene
+                    ? (renderer.slotStatus.sceneId + ' (CONFLICTS WITH MAP - set 0x010004f8!)')
+                    : (sum.showMapOverlay ? 'map 0x100 (BC widget OK)'
+                        : (sum.panelAllowed ? ('panel ' + renderer.slotStatus.panelSlot + ' [RW:' + (sum.rightWidgetPage || 'off') + ']') : 'cluster idle')));
             const hudNote = sum.hudYieldedToNav ? ('HUD yielded (' + (sum.hudYieldReason || 'nav') + ')')
                 : (sum.wocHudOverlay ? 'HUD 3-line over Waze'
                     : (sum.showOwnHudNav ? ('HUD ' + (sum.showHudRoad ? 'RoadBanner+Nav' : 'FullNav')) : (sum.showHud ? 'HUD 3-line' : 'HUD off')));
@@ -709,18 +716,18 @@ mgu.run({
         });
 
         ui.onClick('BTN_READ_NOW', () => {
-            ui.text('BTN_READ_NOW', 'Reading UDS...');
+            ui.text('BTN_READ_NOW', tr('Reading UDS...'));
             hub.pollNow().then(() => {
-                ui.text('BTN_READ_NOW', 'Read UDS Sensors Now');
+                ui.text('BTN_READ_NOW', tr('Read UDS Sensors Now'));
                 tick(Date.now(), true);
             }).catch(() => {
-                ui.text('BTN_READ_NOW', 'Read UDS Sensors Now');
+                ui.text('BTN_READ_NOW', tr('Read UDS Sensors Now'));
             });
         });
 
         ui.onClick('BTN_PROBE_BRAKE', () => {
             lastProbeActive = true;
-            ui.text('BTN_PROBE_BRAKE', 'Recording Probe (30s)...');
+            ui.text('BTN_PROBE_BRAKE', tr('Recording Probe (30s)...'));
             hub.startProbe(30000).then(() => {
                 tick(Date.now(), true);
             }).catch(() => {});

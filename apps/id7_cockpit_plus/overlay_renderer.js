@@ -28,7 +28,7 @@ const path = require('path');
 const { ClusterRender, DEFAULT_PATH } = require('./cluster_render_client');
 const { Canvas } = require('./kit/canvas');
 const fontsMod = require('./kit/fonts');
-const { t: tr } = require('./kit/i18n');
+const { t: tr, getLanguage } = require('./kit/i18n');
 const { installStockBmwFonts, getFontSource } = require('./bmw_font');
 const {
     formatTemp, formatSpeed, formatEvEff, formatFuelEff, formatPress, formatPowerKw,
@@ -242,14 +242,17 @@ function inspectClusterSlotConfig(confDir) {
     }
 
     const resolvedSlot = panelSlot || '0x203';
+    const resolvedScene = sceneId || '0x010004f8';
     const conflictSlot = resolvedSlot === '0x202' || resolvedSlot === '0x201';
-    const safe = resolvedSlot === '0x203' && !conflictSlot;
+    const conflictScene = resolvedScene === '0x010004f0';
+    const safe = resolvedSlot === '0x203' && !conflictSlot && !conflictScene;
     return {
         safe,
         conflictSlot,
+        conflictScene,
         foundLocal,
         panelSlot: panelSlot || '0x203 (default)',
-        sceneId: sceneId || '0x010004f8',
+        sceneId: resolvedScene,
     };
 }
 
@@ -622,7 +625,7 @@ class OverlayRenderer {
             }
         } else {
             if (typeof this.cr.unhost === 'function') {
-                this.cr.unhost('panel', 'map');
+                this.cr.unhost('map');
             }
             if (this.bezelMaskRef && this.bezelMaskVisible && typeof this.cr.set === 'function') {
                 this.cr.set(this.bezelMaskRef, { visible: false });
@@ -740,7 +743,6 @@ class OverlayRenderer {
             this.connected = true;
             this.targets = cr.targets || '';
             this.hostConfigKey = '';
-            this.bezelMaskVisible = false;
             const keys = Object.keys(this.layers);
             for (let i = 0; i < keys.length; i++) {
                 this.layers[keys[i]].prevBuf = null;
@@ -908,7 +910,7 @@ class OverlayRenderer {
                 bolt: hasChgKw,
             };
             heroCol = COL.cyan;
-            subText = chg.maxAmps ? ('CHARGING ' + Math.round(chg.maxAmps) + 'A') : 'CHARGING';
+            subText = chg.maxAmps ? (tr('CHARGING') + ' ' + Math.round(chg.maxAmps) + 'A') : tr('CHARGING');
             subCol = COL.softBlue;
         } else {
             hero = profile.isEv
@@ -1605,20 +1607,24 @@ class OverlayRenderer {
 
     _paintCornerLeft(cv, t, units, mode, coldOilC) {
         cv.clear(COL.clear);
+        const maxW = Math.max(40, cv.w - 6);
         const oil = formatTemp(t.oilTempC, units);
         const isColdOil = typeof t.oilTempC === 'number' && t.oilTempC < coldOilC;
         const isHotOil = typeof t.oilTempC === 'number' && t.oilTempC >= 118;
         const colOil = isColdOil ? COL.icyBlue : (isHotOil ? COL.amber : COL.white);
-        drawTextOutline(cv, tr('OIL') + ' ' + oil.text, 3, 24, 22, colOil, { font: 'bold', align: 'left' });
+        const oilFit = fitTextLine(cv, tr('OIL') + ' ' + oil.text, maxW, [22, 20, 18, 16], 'bold');
+        drawTextOutline(cv, oilFit.text, 3, 24, oilFit.size, colOil, { font: 'bold', align: 'left' });
 
         if (mode === 'oil_gbx') {
             const gbx = formatTemp(t.gearboxOilC, units);
             const colGbx = (typeof t.gearboxOilC === 'number' && t.gearboxOilC >= 105) ? COL.amber : COL.softBlue;
-            drawTextOutline(cv, tr('GBX') + ' ' + gbx.text, 3, 53, 21, colGbx, { font: 'bold', align: 'left' });
+            const gbxFit = fitTextLine(cv, tr('GBX') + ' ' + gbx.text, maxW, [21, 19, 17, 15], 'bold');
+            drawTextOutline(cv, gbxFit.text, 3, 53, gbxFit.size, colGbx, { font: 'bold', align: 'left' });
         } else {
             const cool = formatTemp(t.coolantTempC, units);
             const colCool = (typeof t.coolantTempC === 'number' && t.coolantTempC >= 108) ? COL.red : COL.softBlue;
-            drawTextOutline(cv, tr('CL') + ' ' + cool.text, 3, 53, 22, colCool, { font: 'bold', align: 'left' });
+            const coolFit = fitTextLine(cv, tr('CL') + ' ' + cool.text, maxW, [22, 20, 18, 16], 'bold');
+            drawTextOutline(cv, coolFit.text, 3, 53, coolFit.size, colCool, { font: 'bold', align: 'left' });
         }
     }
 
@@ -1695,13 +1701,13 @@ class OverlayRenderer {
             const frac = clamp(media.frac || 0, 0, 1);
             const fillW = Math.max(barH + 2, Math.round(barW * frac));
             const rem = typeof media.remainSec === 'number' ? Math.max(0, media.remainSec) : Math.max(0, media.totalSec - media.elapsedSec);
-            const remLabel = media.playing === false ? ('PAUSED  -' + formatDuration(rem)) : ('-' + formatDuration(rem));
+            const remLabel = media.playing === false ? (tr('PAUSED') + '  -' + formatDuration(rem)) : ('-' + formatDuration(rem));
             drawTextClean(cv, remLabel, barX1, 426, 22, media.playing === false ? COL.amber : '#e4eaf2', { font: 'label', align: 'right' });
 
             fillSlantBar(cv, barX0, barY, barW, barH, barW, COL.progTrack);
             fillSlantBar(cv, barX0, barY, barW, barH, fillW, media.playing === false ? [255, 179, 71, 255] : [69, 214, 255, 255]);
         } else {
-            const liveTag = media.playing === false ? 'PAUSED' : (media.source || 'LIVE AUDIO');
+            const liveTag = media.playing === false ? tr('PAUSED') : (media.source || tr('LIVE AUDIO'));
             drawTextClean(cv, liveTag, barX1, 428, 20, media.playing === false ? COL.amber : COL.mediaTime, { font: 'label', align: 'right' });
         }
     }
@@ -1987,7 +1993,9 @@ class OverlayRenderer {
         }
 
         const finStr = c.finishTimeText || '--:--';
-        const remLabel = c.remainText ? tr(c.remainText + ' remaining') : tr('Plugged in');
+        const remLabel = c.remainText
+            ? (getLanguage() === 'zh-CN' ? ('\u5269\u4f59 ' + c.remainText) : (c.remainText + ' ' + tr('remaining')))
+            : tr('Plugged in');
 
         if (!cards.length) {
             drawTextOutline(cv, tr('EST. FINISH'), midX, 178, 20, COL.tagGray, { font: 'bold', align: 'center' });
@@ -2061,8 +2069,8 @@ class OverlayRenderer {
         const baselines = [56, 72, 95];
         const socStr = (typeof t.soc === 'number' && isFinite(t.soc)) ? ('SOC ' + Math.round(t.soc) + '%') : 'SOC --%';
         const socCol = (typeof t.soc === 'number' && t.soc <= 10) ? COL.red : ((typeof t.soc === 'number' && t.soc <= 20) ? COL.amber : COL.white);
-        const oilStr = 'OIL ' + formatTemp(t.oilTempC, units).text;
-        const coolStr = 'CL ' + formatTemp(t.coolantTempC, units).text;
+        const oilStr = tr('OIL') + ' ' + formatTemp(t.oilTempC, units).text;
+        const coolStr = tr('CL') + ' ' + formatTemp(t.coolantTempC, units).text;
         const tempCol = profile.isCold ? COL.icyBlue : COL.softBlue;
 
         for (let idx = 0; idx < 3; idx++) {
@@ -2070,7 +2078,8 @@ class OverlayRenderer {
             const m = modes[idx] || 'off';
             const rowMaxW = idx <= 1 ? 138 : (cv.w - 12);
             // Never let a passive alert overwrite Line 3 while the driver is actively pressing the brake!
-            const hudAlertTxt = alertObj && (alertObj.hudText || alertObj.label);
+            const rawHudAlert = alertObj && (alertObj.hudText || alertObj.label);
+            const hudAlertTxt = rawHudAlert ? tr(rawHudAlert) : '';
             if (idx === 2 && hudAlertTxt && !(m === 'brake' && brakeLit > 0)) {
                 const aCol = alertObj.severity === 'red' ? COL.red : COL.amber;
                 const hFit = fitTextLine(cv, hudAlertTxt, cv.w - 10, [16, 15, 14], 'bold');
@@ -2199,26 +2208,30 @@ class OverlayRenderer {
         const isColdOil = typeof t.oilTempC === 'number' && t.oilTempC < coldOilC;
         const isHotOil = typeof t.oilTempC === 'number' && t.oilTempC >= 118;
         const colOil = isColdOil ? COL.icyBlue : (isHotOil ? COL.amber : COL.white);
-        drawTextOutline(cv, 'OIL', 4, 27, 18, COL.tagBlue, { font: 'bold', align: 'left' });
-        drawTextOutline(cv, oil.text, 50, 28, 24, colOil, { font: 'bold', align: 'left' });
+        const oilTag = tr('OIL');
+        const oilTagW = drawTextOutline(cv, oilTag, 4, 27, 18, COL.tagBlue, { font: 'bold', align: 'left' });
+        drawTextOutline(cv, oil.text, Math.max(50, Math.ceil(4 + oilTagW + 6)), 28, 24, colOil, { font: 'bold', align: 'left' });
 
         if (mode === 'oil_gbx') {
             const gbx = formatTemp(t.gearboxOilC, units);
             const colGbx = (typeof t.gearboxOilC === 'number' && t.gearboxOilC >= 105) ? COL.amber : COL.white;
-            drawTextOutline(cv, 'GBX', 4, 58, 18, COL.tagBlue, { font: 'bold', align: 'left' });
-            drawTextOutline(cv, gbx.text, 50, 59, 24, colGbx, { font: 'bold', align: 'left' });
+            const gbxTag = tr('GBX');
+            const gbxTagW = drawTextOutline(cv, gbxTag, 4, 58, 18, COL.tagBlue, { font: 'bold', align: 'left' });
+            drawTextOutline(cv, gbx.text, Math.max(50, Math.ceil(4 + gbxTagW + 6)), 59, 24, colGbx, { font: 'bold', align: 'left' });
         } else {
             const cool = formatTemp(t.coolantTempC, units);
             const colCool = (typeof t.coolantTempC === 'number' && t.coolantTempC >= 108) ? COL.red : COL.white;
-            drawTextOutline(cv, 'CL', 4, 58, 18, COL.tagBlue, { font: 'bold', align: 'left' });
-            drawTextOutline(cv, cool.text, 50, 59, 24, colCool, { font: 'bold', align: 'left' });
+            const clTag = tr('CL');
+            const clTagW = drawTextOutline(cv, clTag, 4, 58, 18, COL.tagBlue, { font: 'bold', align: 'left' });
+            drawTextOutline(cv, cool.text, Math.max(50, Math.ceil(4 + clTagW + 6)), 59, 24, colCool, { font: 'bold', align: 'left' });
         }
     }
 
     _paintMapRight(cv, gearStr, t, units, cornerRightMode, showBrakeRail, showBrakeNum, fg, litCount, absActive, alertObj, iceChargeKw) {
         cv.clear(COL.clear);
 
-        const mapAlertTxt = alertObj && (alertObj.hudText || alertObj.label);
+        const rawMapAlert = alertObj && (alertObj.hudText || alertObj.label);
+        const mapAlertTxt = rawMapAlert ? tr(rawMapAlert) : '';
         if (mapAlertTxt && !(showBrakeRail && litCount > 0)) {
             const aCol = alertObj.severity === 'red' ? COL.red : COL.amber;
             const mFit = fitTextLine(cv, mapAlertTxt, cv.w - 10, [18, 16, 14], 'bold');
@@ -2359,8 +2372,8 @@ class OverlayRenderer {
         }
 
         const fallbackRoad = guide.kind === 'destination'
-            ? '\u5230\u8fbe\u76ee\u7684\u5730'
-            : ((guide.kind === 'turn' && guide.dir === 'STRAIGHT_ON') ? '\u6cbf\u5f53\u524d\u9053\u8def\u76f4\u884c' : '\u524d\u65b9\u8def\u53e3');
+            ? tr('Destination')
+            : ((guide.kind === 'turn' && guide.dir === 'STRAIGHT_ON') ? tr('Continue straight') : tr('Ahead'));
         const roadRaw = (guide.road && String(guide.road).trim()) ? String(guide.road).trim() : fallbackRoad;
         const rFit = fitTextLine(cv, roadRaw, Math.max(60, rightEdge - rx), [22, 19, 17, 15], 'bold');
         drawTextClean(cv, rFit.text, rx, Math.round(cv.h * 0.80), rFit.size, '#dbe7f5', { font: 'bold', align: 'left' });
@@ -2375,16 +2388,17 @@ class OverlayRenderer {
         cv.roundRect(1, 1, cv.w - 2, cv.h - 2, rad, [10, 18, 30, 220]);
         cv.strokeRoundRect(1, 1, cv.w - 2, cv.h - 2, rad, 1.5, [82, 138, 198, 118]);
 
-        const etaPrefix = eta.text ? (eta.text + ' \u5230\u8fbe') : '';
+        const isZh = getLanguage() === 'zh-CN';
+        const etaPrefix = eta.text ? (isZh ? (eta.text + ' \u5230\u8fbe') : ('ETA ' + eta.text)) : '';
         const parts = [];
         if (typeof eta.remainSec === 'number' && isFinite(eta.remainSec) && eta.remainSec > 0) {
             const mins = Math.max(1, Math.round(eta.remainSec / 60));
             if (mins >= 60) {
                 const h = Math.floor(mins / 60);
                 const m = mins % 60;
-                parts.push(h + '\u5c0f\u65f6' + (m > 0 ? (m + '\u5206') : ''));
+                parts.push(isZh ? (h + '\u5c0f\u65f6' + (m > 0 ? (m + '\u5206') : '')) : (h + 'h' + (m > 0 ? (' ' + m + 'm') : '')));
             } else {
-                parts.push(mins + '\u5206\u949f');
+                parts.push(isZh ? (mins + '\u5206\u949f') : (mins + ' min'));
             }
         }
         if (typeof eta.remainMeters === 'number' && isFinite(eta.remainMeters) && eta.remainMeters > 0) {
