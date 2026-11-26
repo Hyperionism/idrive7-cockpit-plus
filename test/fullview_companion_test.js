@@ -241,7 +241,7 @@ function testOverlayRendererFullviewMapHost() {
   const { OverlayRenderer } = require(path.join(builtJsDir, 'overlay_renderer.js'));
   const { resolveUnits } = require(path.join(builtJsDir, 'units.js'));
 
-  const calls = { hosts: [], unhosts: [], effects: [], sets: [] };
+  const calls = { hosts: [], unhosts: [], effects: [], sets: [], uniforms: [] };
   class StubCR extends EventEmitter {
     constructor() { super(); this._next = 1; this.targets = 'map:1088x480,panel:1920x720,hud:800x480'; }
     connect() { process.nextTick(() => this.emit('ready')); }
@@ -250,6 +250,7 @@ function testOverlayRendererFullviewMapHost() {
     effect(opts) { const ref = this._next++; calls.effects.push(Object.assign({ ref }, opts)); return ref; }
     pixels() { return true; }
     set(ref, opts) { calls.sets.push({ ref, opts }); }
+    uniform(ref, name, values) { calls.uniforms.push({ ref, name, values }); }
     host(into, opts) { calls.hosts.push({ into, opts }); }
     unhost(target) { calls.unhosts.push(target); }
   }
@@ -267,14 +268,84 @@ function testOverlayRendererFullviewMapHost() {
   assert.strictEqual(calls.effects.length, 1);
   assert.strictEqual(calls.effects[0].z, 2);
   assert.strictEqual(calls.effects[0].w, 1632);
+  assert.ok(calls.effects[0].fs.includes('816.0') && calls.effects[0].fs.includes('354.0') && calls.effects[0].fs.includes('408.0') && calls.effects[0].fs.includes('u_feather'), 'bezel shader must use split-ellipse SDF');
+  assert.deepStrictEqual(calls.uniforms[0], { ref: calls.effects[0].ref, name: 'u_feather', values: [168] });
+
+  r.render(model, { enabled: true, clusterSlotMode: 'panel_only', mapHostMode: 'fullview', mapBezelMask: true, mapBezelFeather: 'tight' }, 1040);
+  assert.deepStrictEqual(calls.uniforms[1], { ref: calls.effects[0].ref, name: 'u_feather', values: [110] });
+
+  r.render(model, { enabled: true, clusterSlotMode: 'panel_only', mapHostMode: 'fullview', mapBezelMask: true, mapBezelFeather: 'wide' }, 1080);
+  assert.deepStrictEqual(calls.uniforms[2], { ref: calls.effects[0].ref, name: 'u_feather', values: [230] });
 
   r.render(model, { enabled: true, clusterSlotMode: 'panel_only', mapHostMode: 'center', mapBezelMask: true }, 1100);
-  assert.strictEqual(calls.hosts.length, 2);
-  assert.deepStrictEqual(calls.hosts[1].opts, { target: 'map', x: 416, y: 120, w: 1088, h: 480, shown: 1 });
+  assert.strictEqual(calls.hosts.length, 4);
+  assert.deepStrictEqual(calls.hosts[3].opts, { target: 'map', x: 416, y: 120, w: 1088, h: 480, shown: 1 });
   assert.ok(calls.sets.some((s) => s.ref === calls.effects[0].ref && s.opts.visible === false));
 
   r.render(model, { enabled: true, clusterSlotMode: 'panel_only', mapHostMode: 'off' }, 1200);
   assert.deepStrictEqual(calls.unhosts, ['map'], 'unhost must follow real ClusterRender.unhost(target) 1-arg signature');
+  r.close();
+}
+
+function testClusterWidgetPlateToggles() {
+  const builtJsDir = path.join(ROOT, 'dist', 'id7_cockpit_plus', 'source', 'javascript');
+  const { OverlayRenderer } = require(path.join(builtJsDir, 'overlay_renderer.js'));
+  const { resolveUnits } = require(path.join(builtJsDir, 'units.js'));
+
+  const r = new OverlayRenderer({ allowPanel: true });
+  const units = resolveUnits({ unitSystem: 'metric' }, {});
+  const profile = { kind: 'ice', isPhev: false, isCold: false };
+  const routeHudNav = {
+    routeActive: true,
+    turnDistMeters: 180,
+    guide: { kind: 'turn', dir: 'RIGHT', dist: '180', unit: 'm', road: 'Test Road' },
+    lanes: { lanes: [{ follow: 'RIGHT', others: [], hi: true, info: 'NONE' }], markers: ['DASHED', 'DASHED'], rec: 0 },
+    eta: { text: '14:20', remainSec: 600, remainMeters: 5400 },
+    show: { kind: 'turn', dir: 'RIGHT', dist: '180', unit: 'm', road: 'Test Road' }
+  };
+  const model = {
+    units,
+    profile,
+    telemetry: { speedKmh: 62, gear: 3, stage: 'D', navRouteActive: true, hudNav: routeHudNav },
+    efficiency: {}
+  };
+
+  function pxAt(cv, x, y) {
+    const o = (y * cv.w + x) * 4;
+    return [cv.d[o], cv.d[o + 1], cv.d[o + 2], cv.d[o + 3]];
+  }
+  function countNonZero(cv) {
+    let n = 0;
+    for (let i = 3; i < cv.d.length; i += 4) if (cv.d[i] > 40) n++;
+    return n;
+  }
+
+  // 1. Default plate configuration: speed frameless, nav widgets natural smoked glass (neutral RGB, zero blue border)
+  r.render(model, { enabled: true, clusterSlotMode: 'panel_only' }, 2000);
+  assert.strictEqual(pxAt(r.layers.speed.cv, 24, 10)[3], 0, 'speed default frameless body sample must be transparent');
+  for (const name of ['lane_guidance', 'guidance_turn_card', 'eta_pill']) {
+    const cv = r.layers[name].cv;
+    const p = pxAt(cv, 24, 10);
+    assert.ok(p[3] >= 140, `${name} glass plate must be visible at interior corner (got alpha=${p[3]})`);
+    assert.ok(Math.abs(p[2] - p[0]) <= 12, `${name} glass plate must be neutral charcoal without blue tint (rgb=${p.slice(0, 3).join(',')})`);
+  }
+
+  // 2. Toggle speed ON ('glass') and nav widgets OFF ('none')
+  r.render(model, {
+    enabled: true,
+    clusterSlotMode: 'panel_only',
+    speedPlate: 'glass',
+    laneBarPlate: 'none',
+    turnCardPlate: 'none',
+    etaPillPlate: 'none'
+  }, 2100);
+  const spGlass = pxAt(r.layers.speed.cv, 24, 10);
+  assert.ok(spGlass[3] >= 140 && Math.abs(spGlass[2] - spGlass[0]) <= 12, 'speed glass plate must render cleanly with neutral fill');
+  for (const name of ['lane_guidance', 'guidance_turn_card', 'eta_pill']) {
+    const cv = r.layers[name].cv;
+    assert.strictEqual(pxAt(cv, 24, 10)[3], 0, `${name} frameless background sample must be transparent`);
+    assert.ok(countNonZero(cv) > 200, `${name} frameless mode must still render foreground glyphs`);
+  }
   r.close();
 }
 
@@ -351,6 +422,7 @@ function main() {
     testRepairAndRestoreStaleClusterRenderLocalConf,
     testActivateNoOpWhenWazeAbsent,
     testOverlayRendererFullviewMapHost,
+    testClusterWidgetPlateToggles,
     testAppRequiresAndSchema2Catalog,
     testFullviewUpstreamPatcherAndExtraCatalog,
     testSimplifiedChineseLocaleAndPackage
