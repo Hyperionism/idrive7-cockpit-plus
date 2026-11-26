@@ -88,18 +88,42 @@ jobs:
           make -C /tmp/up/idrive-apps/native/cluster-render test
           make -C /tmp/up/idrive-apps/native/waze-on-cluster test
 
-          # Build head-unit Ubuntu 18.04 Docker targets & MGU Store tarballs
-          (cd /tmp/up/idrive-apps && node release/release.js build cluster-render waze-on-cluster robertn_waze_cluster)
-          (cd /tmp/up/mgu-store && node release/release.js build mgu-render)
-          ls -lh /tmp/up/idrive-apps/release/out /tmp/up/mgu-store/release/out
+          # Build head-unit Ubuntu 18.04 Docker targets & MGU Store tarballs (retry on transient Ubuntu 18.04 apt mirror errors)
+          for attempt in 1 2 3; do
+            if (cd /tmp/up/idrive-apps && node release/release.js build cluster-render waze-on-cluster robertn_waze_cluster); then
+              break
+            fi
+            [ "$attempt" -eq 3 ] && exit 1
+            echo "::warning::idrive-apps Docker build attempt ${attempt} failed; retrying in 5s..."
+            sleep 5
+          done
+
+          MGU_RENDER_OK=0
+          for attempt in 1 2 3; do
+            if (cd /tmp/up/mgu-store && node release/release.js build mgu-render); then
+              MGU_RENDER_OK=1
+              break
+            fi
+            echo "::warning::Optional mgu-render Docker build attempt ${attempt} failed (likely Ubuntu 18.04 apt mirror hiccup); retrying in 5s..."
+            sleep 5
+          done
+          if [ "$MGU_RENDER_OK" -eq 0 ]; then
+            echo "::warning::Skipping optional mgu-render after 3 failed attempts; core Cockpit+ FullView suite is unaffected."
+          fi
+          ls -lh /tmp/up/idrive-apps/release/out
+          [ -d /tmp/up/mgu-store/release/out ] && ls -lh /tmp/up/mgu-store/release/out || true
 
       - name: Build unified no-SDK release packages & Schema 2 catalog
         run: |
           rm -rf dist/
+          EXTRA_CATS="/tmp/up/idrive-apps/release/out/catalog.json"
+          if [ -f "/tmp/up/mgu-store/release/out/catalog.json" ]; then
+            EXTRA_CATS="${EXTRA_CATS},/tmp/up/mgu-store/release/out/catalog.json"
+          fi
           node release/build_catalog.js \
             --repo "${{ github.repository }}" \
             --tag "${{ steps.meta.outputs.tag }}" \
-            --extra-catalog "/tmp/up/idrive-apps/release/out/catalog.json,/tmp/up/mgu-store/release/out/catalog.json"
+            --extra-catalog "${EXTRA_CATS}"
           ls -lh dist/
 
       - name: Create or update versioned GitHub Release
