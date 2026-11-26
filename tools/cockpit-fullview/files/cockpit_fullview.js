@@ -15,6 +15,7 @@ var childProcess = require('child_process');
 
 var PROFILE_NAME = 'ID7-cockpit';
 var STATE_FILE = 'cockpit-fullview.state.json';
+var CR_STATE_FILE = 'cockpit-fullview.cr-state.json';
 var BACKUP_SUFFIX = '.cockpit-bak';
 var POD_KEYS = ['speed_pod', 'guidance_pod', 'trip_pod'];
 
@@ -170,38 +171,99 @@ function stripManagedKeys(text) {
   return filtered.join(eol);
 }
 
-function tryRestartWazeService(opts) {
+function tryRestartService(unitName, opts) {
   var skip = opts && opts.skipSystemctl;
   var mockLog = opts && opts.mockLog;
   if (mockLog) {
-    fs.appendFileSync(mockLog, 'systemctl try-restart waze-on-cluster.service\n', 'utf8');
+    fs.appendFileSync(mockLog, 'systemctl try-restart ' + unitName + '\n', 'utf8');
   }
   if (skip) return;
   try {
-    childProcess.execFileSync('systemctl', ['try-restart', 'waze-on-cluster.service'], {
+    childProcess.execFileSync('systemctl', ['try-restart', unitName], {
       stdio: 'ignore',
       timeout: 8000
     });
   } catch (err) {
-    // Non-fatal: waze-on-cluster may be idle/unloaded while parked or inactive
+    // Non-fatal: service may be idle/unloaded while parked or inactive
   }
+}
+
+function tryRestartWazeService(opts) {
+  tryRestartService('waze-on-cluster.service', opts);
+}
+
+function repairClusterRenderConf(crDir, opts) {
+  if (!crDir || !fs.existsSync(crDir)) return { changed: false, reason: 'cluster-render dir absent' };
+  var localConfPath = path.join(crDir, 'cluster-render.local.conf');
+  if (!fs.existsSync(localConfPath)) return { changed: false, reason: 'no cluster-render.local.conf' };
+
+  var origText = fs.readFileSync(localConfPath, 'utf8');
+  var hasConflictScene = /^\s*panel_scene_id\s*=\s*0x0*10004f0\b/im.test(origText);
+  var hasConflictSlot = /^\s*panel_slot\s*=\s*0x0*20[12]\b/im.test(origText);
+  if (!hasConflictScene && !hasConflictSlot) {
+    return { changed: false, reason: 'cluster-render.local.conf clean' };
+  }
+
+  var backupPath = localConfPath + BACKUP_SUFFIX;
+  var crStatePath = path.join(crDir, CR_STATE_FILE);
+  if (!fs.existsSync(backupPath)) {
+    fs.writeFileSync(backupPath, origText, 'utf8');
+  }
+  if (!fs.existsSync(crStatePath)) {
+    fs.writeFileSync(crStatePath, JSON.stringify({
+      repairedSceneId: hasConflictScene,
+      repairedSlot: hasConflictSlot
+    }, null, 2) + '\n', 'utf8');
+  }
+
+  var nextText = origText;
+  if (hasConflictScene) {
+    nextText = upsertIniKey(nextText, 'panel_scene_id', '0x010004f8', null);
+  }
+  if (hasConflictSlot) {
+    nextText = upsertIniKey(nextText, 'panel_slot', '0x203', null);
+  }
+  fs.writeFileSync(localConfPath, nextText, 'utf8');
+  tryRestartService('cluster-render.service', opts);
+  return { changed: true, repairedSceneId: hasConflictScene, repairedSlot: hasConflictSlot };
+}
+
+function restoreClusterRenderConf(crDir, opts) {
+  if (!crDir || !fs.existsSync(crDir)) return { restored: false };
+  var localConfPath = path.join(crDir, 'cluster-render.local.conf');
+  var backupPath = localConfPath + BACKUP_SUFFIX;
+  var crStatePath = path.join(crDir, CR_STATE_FILE);
+  if (!fs.existsSync(backupPath)) {
+    safeUnlink(crStatePath);
+    return { restored: false };
+  }
+  fs.writeFileSync(localConfPath, fs.readFileSync(backupPath, 'utf8'), 'utf8');
+  safeUnlink(backupPath);
+  safeUnlink(crStatePath);
+  tryRestartService('cluster-render.service', opts);
+  return { restored: true };
 }
 
 function activate(opts) {
   var wocDir = (opts && opts.wocDir) || process.env.COCKPIT_WOC_DIR || '/var/opt/waze-on-cluster';
+  var crDir = (opts && opts.crDir) || process.env.COCKPIT_CR_DIR || '/var/opt/cluster-render';
   var skipSystemctl = (opts && opts.skipSystemctl) || process.env.COCKPIT_SKIP_SYSTEMCTL === '1';
   var mockLog = (opts && opts.mockLog) || process.env.COCKPIT_MOCK_LOG || '';
 
+  // Repair stale panel_scene_id = 0x010004f0 or panel_slot = 0x202 left over from legacy 2.x installs
+  var crRes = repairClusterRenderConf(crDir, { skipSystemctl: skipSystemctl, mockLog: mockLog });
+  var crNote = crRes.changed ? ' (repaired stale cluster-render.local.conf)' : '';
+
   if (!fs.existsSync(wocDir)) {
     return {
-      status: 'waze-on-cluster not installed; skipped FullView pod configuration'
+      status: 'waze-on-cluster not installed; skipped FullView pod configuration' + crNote
     };
   }
 
   var src = findSourceId7Profile(wocDir);
   if (!src) {
     return {
-      status: 'Open-source waze-on-cluster active (no C++ pods to override)'
+      status: 'Open-source waze-on-cluster active (no C++ pods to override)' + crNote
     };
   }
   var vehiclesDir = path.join(wocDir, 'vehicles');
@@ -239,17 +301,24 @@ function activate(opts) {
   tryRestartWazeService({ skipSystemctl: skipSystemctl, mockLog: mockLog });
 
   return {
-    status: 'Configured waze-on-cluster (' + PROFILE_NAME + ') for pure FullView + Cockpit+'
+    status: 'Configured waze-on-cluster (' + PROFILE_NAME + ') for pure FullView + Cockpit+' + crNote
   };
 }
 
 function deactivate(opts) {
   var wocDir = (opts && opts.wocDir) || process.env.COCKPIT_WOC_DIR || '/var/opt/waze-on-cluster';
+  var crDir = (opts && opts.crDir) || process.env.COCKPIT_CR_DIR || '/var/opt/cluster-render';
   var skipSystemctl = (opts && opts.skipSystemctl) || process.env.COCKPIT_SKIP_SYSTEMCTL === '1';
   var mockLog = (opts && opts.mockLog) || process.env.COCKPIT_MOCK_LOG || '';
 
+  var crRes = restoreClusterRenderConf(crDir, { skipSystemctl: skipSystemctl, mockLog: mockLog });
+
   if (!fs.existsSync(wocDir)) {
-    return { status: 'waze-on-cluster not present; nothing to restore' };
+    return {
+      status: crRes.restored
+        ? 'Restored cluster-render.local.conf (waze-on-cluster not present)'
+        : 'waze-on-cluster not present; nothing to restore'
+    };
   }
 
   var localConfPath = path.join(wocDir, 'waze-on-cluster.local.conf');
@@ -266,24 +335,35 @@ function deactivate(opts) {
     }
   }
 
+  var wocChanged = false;
   if (fs.existsSync(backupPath)) {
     fs.writeFileSync(localConfPath, fs.readFileSync(backupPath, 'utf8'), 'utf8');
     safeUnlink(backupPath);
+    wocChanged = true;
   } else if (state && state.hadLocalConf === false) {
     safeUnlink(localConfPath);
-  } else if (fs.existsSync(localConfPath)) {
+    wocChanged = true;
+  } else if (fs.existsSync(localConfPath) && fs.existsSync(statePath)) {
     var cleaned = stripManagedKeys(fs.readFileSync(localConfPath, 'utf8')).trim();
     if (!cleaned) safeUnlink(localConfPath);
     else fs.writeFileSync(localConfPath, cleaned + '\n', 'utf8');
+    wocChanged = true;
   }
 
-  safeUnlink(profilePath);
+  if (fs.existsSync(profilePath)) {
+    safeUnlink(profilePath);
+    wocChanged = true;
+  }
   safeUnlink(statePath);
 
-  tryRestartWazeService({ skipSystemctl: skipSystemctl, mockLog: mockLog });
+  if (wocChanged) {
+    tryRestartWazeService({ skipSystemctl: skipSystemctl, mockLog: mockLog });
+  }
 
   return {
-    status: 'Restored original waze-on-cluster profile'
+    status: crRes.restored
+      ? 'Restored original waze-on-cluster & cluster-render configs'
+      : 'Restored original waze-on-cluster profile'
   };
 }
 
@@ -310,6 +390,8 @@ module.exports = {
   findSourceId7Profile: findSourceId7Profile,
   upsertIniKey: upsertIniKey,
   buildCockpitProfileText: buildCockpitProfileText,
+  repairClusterRenderConf: repairClusterRenderConf,
+  restoreClusterRenderConf: restoreClusterRenderConf,
   activate: activate,
   deactivate: deactivate
 };
