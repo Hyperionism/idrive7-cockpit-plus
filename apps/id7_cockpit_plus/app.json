@@ -396,11 +396,16 @@
       "settings": [
         "mapHostMode",
         "mapBezelMask",
+        "mapBezelFeather",
         "clusterLaneBar",
+        "laneBarPlate",
         "clusterTurnCard",
         "turnCardTriggerM",
+        "turnCardPlate",
         "clusterEtaPill",
+        "etaPillPlate",
         "clusterSpeedOverlay",
+        "speedPlate",
         "laneBarNudgeX",
         "laneBarNudgeY",
         "turnCardNudgeX",
@@ -1139,10 +1144,46 @@
       "default": true
     },
     {
+      "key": "mapBezelFeather",
+      "label": "Bezel fade width",
+      "type": "choice",
+      "default": "standard",
+      "options": [
+        [
+          "standard",
+          "Standard 168 px (default)"
+        ],
+        [
+          "tight",
+          "Compact 110 px (wider map)"
+        ],
+        [
+          "wide",
+          "Soft 230 px (wider fade)"
+        ]
+      ]
+    },
+    {
       "key": "clusterLaneBar",
       "label": "5AU top-center lane guidance",
       "type": "bool",
       "default": true
+    },
+    {
+      "key": "laneBarPlate",
+      "label": "5AU lane bar background",
+      "type": "choice",
+      "default": "glass",
+      "options": [
+        [
+          "glass",
+          "Translucent glass"
+        ],
+        [
+          "none",
+          "Frameless (no background)"
+        ]
+      ]
     },
     {
       "key": "clusterTurnCard",
@@ -1179,16 +1220,64 @@
       ]
     },
     {
+      "key": "turnCardPlate",
+      "label": "Turn card background",
+      "type": "choice",
+      "default": "glass",
+      "options": [
+        [
+          "glass",
+          "Translucent glass"
+        ],
+        [
+          "none",
+          "Frameless (no background)"
+        ]
+      ]
+    },
+    {
       "key": "clusterEtaPill",
       "label": "Bottom arrival ETA capsule",
       "type": "bool",
       "default": true
     },
     {
+      "key": "etaPillPlate",
+      "label": "ETA capsule background",
+      "type": "choice",
+      "default": "glass",
+      "options": [
+        [
+          "glass",
+          "Translucent glass"
+        ],
+        [
+          "none",
+          "Frameless (no background)"
+        ]
+      ]
+    },
+    {
       "key": "clusterSpeedOverlay",
       "label": "Frameless digital speed overlay",
       "type": "bool",
       "default": true
+    },
+    {
+      "key": "speedPlate",
+      "label": "Speed overlay background",
+      "type": "choice",
+      "default": "none",
+      "options": [
+        [
+          "glass",
+          "Translucent glass"
+        ],
+        [
+          "none",
+          "Frameless (no background)"
+        ]
+      ]
     },
     {
       "key": "laneBarNudgeX",

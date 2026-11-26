@@ -148,20 +148,19 @@ const BEZEL_MASK_FS = [
     '#version 100',
     'precision mediump float;',
     'varying vec2 v_uv;',
+    'uniform float u_feather;',
     'void main() {',
     '    float x = v_uv.x * 1632.0;',
     '    float y = v_uv.y * 720.0;',
-    '    float uxL = clamp(1.0 - x / 374.0, 0.0, 1.0);',
-    '    float uxR = clamp(1.0 - (1632.0 - x) / 374.0, 0.0, 1.0);',
-    '    float vyT = clamp(1.0 - y / 354.0, 0.0, 1.0);',
-    '    float bxL = clamp(1.0 - x / 408.0, 0.0, 1.0);',
-    '    float bxR = clamp(1.0 - (1632.0 - x) / 408.0, 0.0, 1.0);',
-    '    float vyB = clamp(1.0 - (720.0 - y) / 168.0, 0.0, 1.0);',
-    '    float eTop = max(uxL * uxL + vyT * vyT, uxR * uxR + vyT * vyT);',
-    '    float eBot = max(bxL * bxL + vyB * vyB, bxR * bxR + vyB * vyB);',
-    '    float cornerA = smoothstep(0.92, 1.12, max(eTop, eBot));',
+    '    float dx = (x - 816.0) / 816.0;',
+    '    float ry = y < 374.0 ? 354.0 : 408.0;',
+    '    float dy = (y - 374.0) / ry;',
+    '    float e = length(vec2(dx, dy));',
+    '    float fPx = u_feather > 1.0 ? u_feather : 168.0;',
+    '    float f = clamp(fPx / 816.0, 0.04, 0.45);',
+    '    float arcA = smoothstep(1.0 - f, 1.0, e);',
     '    float botFade = 1.0 - smoothstep(0.0, 20.0, 720.0 - y);',
-    '    float a = clamp(max(cornerA, botFade * 0.85), 0.0, 1.0);',
+    '    float a = clamp(max(arcA, botFade), 0.0, 1.0);',
     '    gl_FragColor = vec4(0.0, 0.0, 0.0, a);',
     '}',
 ].join('\n');
@@ -374,6 +373,48 @@ function paintRadialGlow(cv, cx, cy, radius, rgb, peakAlpha) {
     }
 }
 
+/**
+ * Natural neutral smoked-glass background plate: soft multi-step drop shadow,
+ * neutral charcoal translucent fill, subtle upper glass sheen, and 1px hairline
+ * white catchlight (no colored/blue border).
+ */
+function paintNaturalGlassPlate(cv, radius, opts) {
+    const o = opts || {};
+    const alpha = typeof o.alpha === 'number' ? o.alpha : 172;
+    const inset = 3;
+    const w = cv.w - inset * 2;
+    const h = cv.h - inset * 2;
+    if (w <= 4 || h <= 4) return;
+    const r = Math.min(Math.max(4, radius || 16), Math.floor(Math.min(w, h) / 2));
+
+    cv.roundRect(0, 0, cv.w, cv.h, r + 3, [0, 0, 0, 24]);
+    cv.roundRect(1, 1, cv.w - 2, cv.h - 2, r + 2, [0, 0, 0, 48]);
+    cv.roundRect(2, 2, cv.w - 4, cv.h - 4, r + 1, [0, 0, 0, 76]);
+    cv.roundRect(inset, inset, w, h, r, [10, 12, 16, alpha]);
+
+    const sheenRows = Math.max(1, Math.round(h * 0.38));
+    const minBodyA = Math.max(40, alpha - 20);
+    const d = cv.d;
+    for (let row = 0; row < sheenRows; row++) {
+        const py = inset + row;
+        if (py < 0 || py >= cv.h) continue;
+        const t = row / sheenRows;
+        const lift = Math.round(14 * (1 - t) * (1 - t));
+        if (lift <= 0) break;
+        const rowOff = py * cv.w;
+        for (let px = inset; px < inset + w; px++) {
+            const p = (rowOff + px) * 4;
+            if (d[p + 3] >= minBodyA) {
+                d[p] = Math.min(255, d[p] + lift);
+                d[p + 1] = Math.min(255, d[p + 1] + lift);
+                d[p + 2] = Math.min(255, d[p + 2] + lift);
+            }
+        }
+    }
+
+    cv.strokeRoundRect(inset, inset, w, h, r, 1, [255, 255, 255, 34]);
+}
+
 function fillSlantBar(cv, x0, y, w, h, fillW, col) {
     if (fillW <= 0) return;
     const rgba = Array.isArray(col) ? col : [69, 214, 255, 255];
@@ -584,13 +625,14 @@ class OverlayRenderer {
         this.lastSummary = {};
     }
 
-    _syncMapHost(mode, maskOn) {
+    _syncMapHost(mode, maskOn, featherMode) {
         const cleanMode = (mode === 'fullview' || mode === 'center') ? mode : 'off';
         const showMask = cleanMode === 'fullview' && Boolean(maskOn);
+        const featherPx = featherMode === 'tight' ? 110 : (featherMode === 'wide' ? 230 : 168);
         this.hostModeActive = cleanMode;
         if (!this.cr) return;
 
-        const key = cleanMode + '|' + (showMask ? '1' : '0');
+        const key = cleanMode + '|' + (showMask ? '1' : '0') + '|' + featherPx;
         if (key === this.hostConfigKey) return;
         this.hostConfigKey = key;
 
@@ -618,6 +660,9 @@ class OverlayRenderer {
                 } else if (!this.bezelMaskVisible && typeof this.cr.set === 'function') {
                     this.cr.set(this.bezelMaskRef, { visible: true });
                     this.bezelMaskVisible = true;
+                }
+                if (this.bezelMaskRef && typeof this.cr.uniform === 'function') {
+                    this.cr.uniform(this.bezelMaskRef, 'u_feather', [featherPx]);
                 }
             } else if (this.bezelMaskRef && this.bezelMaskVisible && typeof this.cr.set === 'function') {
                 this.cr.set(this.bezelMaskRef, { visible: false });
@@ -799,7 +844,7 @@ class OverlayRenderer {
         }
         const wantHostMode = panelAllowed ? (s.mapHostMode || 'fullview') : 'off';
         const wantBezelMask = s.mapBezelMask !== false;
-        this._syncMapHost(wantHostMode, wantBezelMask);
+        this._syncMapHost(wantHostMode, wantBezelMask, s.mapBezelFeather || 'standard');
 
         // HUD navigation re-rendering & intersection mini-map auto-yield:
         const hudNavMode = s.hudNavMode || 'own_nav_minimap';
@@ -852,6 +897,10 @@ class OverlayRenderer {
         const clusterLaneEnabled = s.clusterLaneBar !== false && layoutState.widgets.lane_guidance.enabled !== false;
         const clusterTurnCardEnabled = s.clusterTurnCard !== false && layoutState.widgets.guidance_turn_card.enabled !== false;
         const clusterEtaEnabled = s.clusterEtaPill !== false && layoutState.widgets.eta_pill.enabled !== false;
+        const speedPlate = s.speedPlate === 'glass' ? 'glass' : 'none';
+        const laneBarPlate = s.laneBarPlate === 'none' ? 'none' : 'glass';
+        const turnCardPlate = s.turnCardPlate === 'none' ? 'none' : 'glass';
+        const etaPillPlate = s.etaPillPlate === 'none' ? 'none' : 'glass';
         const cornerRightMode = resolveCornerRightMode(s.cornerRightDisplay, profile, t, hvSocGaugeEnabled);
         const rightWidgetMode = s.rightWidgetMode || (((s.widgetMedia !== false ? 'M' : '') + (s.widgetTrip !== false ? 'T' : '') + (s.widgetTpms ? 'P' : '')) || 'off');
         const hudHeadwayMode = s.hudHeadway || 'full';
@@ -1072,9 +1121,9 @@ class OverlayRenderer {
                 const lSpd = this._ensureOrLocal('speed', Object.assign({ target: 'panel', visible: true, z: 12 }, spRect));
                 const spdFmt = formatSpeed(t.speedKmh, units);
                 const spCfg = layoutState.widgets.speed || SPEED_BASE;
-                const spKey = [spdFmt.value, spdFmt.unit, spCfg.fontSize || 72, spCfg.showUnit !== false ? 1 : 0, spRect.w, spRect.h].join('|');
+                const spKey = [spdFmt.value, spdFmt.unit, spCfg.fontSize || 72, spCfg.showUnit !== false ? 1 : 0, speedPlate, spRect.w, spRect.h].join('|');
                 if (spKey !== lSpd._renderedKey || (this.cr && !lSpd.prevBuf)) {
-                    this._paintClusterSpeed(lSpd.cv, spdFmt, spCfg.showUnit !== false, spCfg.fontSize || 72);
+                    this._paintClusterSpeed(lSpd.cv, spdFmt, spCfg.showUnit !== false, spCfg.fontSize || 72, speedPlate === 'glass');
                     lSpd._renderedKey = spKey;
                 }
                 this._setVisible('speed', true);
@@ -1091,9 +1140,9 @@ class OverlayRenderer {
                     minX: 500, maxX: 1220 - LANE_GUIDANCE_BASE.w, minY: 0, maxY: 240,
                 });
                 const lLn = this._ensureOrLocal('lane_guidance', Object.assign({ target: 'panel', visible: true, z: 14 }, lnRect));
-                const lk = hudNavKey({ lanes: clusterLaneObj }) + '|' + lnRect.w + 'x' + lnRect.h;
+                const lk = hudNavKey({ lanes: clusterLaneObj }) + '|' + laneBarPlate + '|' + lnRect.w + 'x' + lnRect.h;
                 if (lk !== lLn._renderedKey || (this.cr && !lLn.prevBuf)) {
-                    this._paintClusterLaneGuidance(lLn.cv, clusterLaneObj);
+                    this._paintClusterLaneGuidance(lLn.cv, clusterLaneObj, laneBarPlate === 'glass');
                     lLn._renderedKey = lk;
                 }
                 this._setVisible('lane_guidance', true);
@@ -1110,9 +1159,9 @@ class OverlayRenderer {
                     minX: 500, maxX: 1244 - TURN_CARD_BASE.w, minY: 20, maxY: 500,
                 });
                 const lTc = this._ensureOrLocal('guidance_turn_card', Object.assign({ target: 'panel', visible: true, z: 15 }, tcRect));
-                const tk = hudNavKey(turnCardGuide) + '|' + tcRect.w + 'x' + tcRect.h;
+                const tk = hudNavKey(turnCardGuide) + '|' + turnCardPlate + '|' + tcRect.w + 'x' + tcRect.h;
                 if (tk !== lTc._renderedKey || (this.cr && !lTc.prevBuf)) {
-                    this._paintClusterTurnCard(lTc.cv, turnCardGuide, units);
+                    this._paintClusterTurnCard(lTc.cv, turnCardGuide, units, turnCardPlate === 'glass');
                     lTc._renderedKey = tk;
                 }
                 this._setVisible('guidance_turn_card', true);
@@ -1131,9 +1180,9 @@ class OverlayRenderer {
                 const lEp = this._ensureOrLocal('eta_pill', Object.assign({ target: 'panel', visible: true, z: 14 }, epRect));
                 const remMinKey = typeof clusterEtaObj.remainSec === 'number' ? Math.round(clusterEtaObj.remainSec / 60) : -1;
                 const remKmKey = typeof clusterEtaObj.remainMeters === 'number' ? Math.round(clusterEtaObj.remainMeters / 100) : -1;
-                const epKey = [clusterEtaObj.text || '', remMinKey, remKmKey, units.distUnit, epRect.w, epRect.h].join('|');
+                const epKey = [clusterEtaObj.text || '', remMinKey, remKmKey, units.distUnit, etaPillPlate, epRect.w, epRect.h].join('|');
                 if (epKey !== lEp._renderedKey || (this.cr && !lEp.prevBuf)) {
-                    this._paintClusterEtaPill(lEp.cv, clusterEtaObj, units);
+                    this._paintClusterEtaPill(lEp.cv, clusterEtaObj, units, etaPillPlate === 'glass');
                     lEp._renderedKey = epKey;
                 }
                 this._setVisible('eta_pill', true);
@@ -2282,29 +2331,35 @@ class OverlayRenderer {
         }
     }
 
-    _paintClusterSpeed(cv, spd, showUnit, fontSizeOpt) {
+    _paintClusterSpeed(cv, spd, showUnit, fontSizeOpt, showPlate) {
         cv.clear(COL.clear);
+        const plateOn = Boolean(showPlate);
+        if (plateOn) {
+            paintNaturalGlassPlate(cv, 18, { alpha: 164 });
+        }
         const valStr = String(spd && spd.value !== undefined ? spd.value : '--');
         const unitStr = (showUnit !== false && spd && spd.unit) ? String(spd.unit) : '';
         const sz = clamp(Number(fontSizeOpt) || 72, 40, 84);
         const cx = Math.round(cv.w / 2);
-        const digitY = unitStr ? Math.round(cv.h * 0.69) : Math.round(cv.h * 0.78);
-        drawTextOutline(cv, valStr, cx, digitY, sz, COL.white, { font: 'num', align: 'center' });
+        const digitY = unitStr ? Math.round(cv.h * (plateOn ? 0.67 : 0.69)) : Math.round(cv.h * 0.78);
+        const drawTxt = plateOn ? drawTextClean : drawTextOutline;
+        drawTxt(cv, valStr, cx, digitY, sz, COL.white, { font: 'num', align: 'center' });
         if (unitStr) {
-            drawTextOutline(cv, unitStr, cx, Math.min(cv.h - 4, digitY + 21), 15, COL.dim, { font: 'bold', align: 'center' });
+            drawTxt(cv, unitStr, cx, Math.min(cv.h - (plateOn ? 8 : 4), digitY + 21), 15, COL.dim, { font: 'bold', align: 'center' });
         }
     }
 
-    _paintClusterLaneGuidance(cv, lanesObj) {
+    _paintClusterLaneGuidance(cv, lanesObj, showPlate) {
         cv.clear(COL.clear);
         const win = laneWindow(lanesObj);
         if (!win || !Array.isArray(win.lanes) || !win.lanes.length) return false;
 
-        cv.roundRect(1, 1, cv.w - 2, cv.h - 2, 16, [8, 15, 26, 200]);
-        cv.strokeRoundRect(1, 1, cv.w - 2, cv.h - 2, 16, 1.5, [76, 132, 196, 118]);
+        if (showPlate !== false) {
+            paintNaturalGlassPlate(cv, 16, { alpha: 168 });
+        }
 
         const col = [242, 246, 252, 255];
-        const dim = [96, 122, 152, 215];
+        const dim = [110, 128, 152, 215];
         const acc = [56, 199, 255, 255];
         const hasNext = Boolean(lanesObj.next && Array.isArray(lanesObj.next.lanes) && lanesObj.next.lanes.length > 0);
         if (hasNext) {
@@ -2317,7 +2372,7 @@ class OverlayRenderer {
                 isBack: true,
                 underlineAlpha: 0,
             });
-            cv.fillRect(28, Math.round(cv.h * 0.44), Math.max(20, cv.w - 56), 1, [92, 132, 174, 115]);
+            cv.fillRect(28, Math.round(cv.h * 0.44), Math.max(20, cv.w - 56), 1, [255, 255, 255, 42]);
             drawLaneRow(cv, lanesObj, Math.round(cv.w / 2), Math.round(cv.h * 0.70), col, dim, acc, {
                 maxW: cv.w - 24,
                 cellMaxW: 42,
@@ -2338,17 +2393,20 @@ class OverlayRenderer {
         return true;
     }
 
-    _paintClusterTurnCard(cv, guide) {
+    _paintClusterTurnCard(cv, guide, units, showPlate) {
         cv.clear(COL.clear);
         if (!guide) return false;
 
-        cv.roundRect(1, 1, cv.w - 2, cv.h - 2, 18, [10, 18, 30, 224]);
-        cv.strokeRoundRect(1, 1, cv.w - 2, cv.h - 2, 18, 1.5, [92, 154, 220, 128]);
+        const plateOn = showPlate !== false;
+        if (plateOn) {
+            paintNaturalGlassPlate(cv, 18, { alpha: 178 });
+        }
+        const drawTxt = plateOn ? drawTextClean : drawTextOutline;
 
         const arrowCx = Math.min(54, Math.round(cv.w * 0.14));
         const arrowCy = Math.round(cv.h / 2);
         const arrowScale = Math.min(0.98, Math.max(0.65, (cv.h - 14) / 96));
-        drawArrow(cv, guide, arrowCx, arrowCy, arrowScale, [244, 248, 255, 255], [100, 126, 158, 225]);
+        drawArrow(cv, guide, arrowCx, arrowCy, arrowScale, [244, 248, 255, 255], [108, 126, 150, 225]);
 
         const rx = Math.min(104, Math.round(cv.w * 0.27));
         const rightEdge = cv.w - 14;
@@ -2366,9 +2424,9 @@ class OverlayRenderer {
         const maxDistW = Math.max(40, rightEdge - rx - badgeReserve - unitReserve);
         const dFit = fitTextLine(cv, distStr, maxDistW, [36, 30, 26, 22], 'bold');
         const distY = Math.round(cv.h * 0.46);
-        const dw = drawTextClean(cv, dFit.text, rx, distY, dFit.size, COL.white, { font: 'bold', align: 'left' });
+        const dw = drawTxt(cv, dFit.text, rx, distY, dFit.size, COL.white, { font: 'bold', align: 'left' });
         if (unitStr) {
-            drawTextClean(cv, unitStr, rx + dw + 6, distY - 2, 20, '#7dc4ff', { font: 'bold', align: 'left' });
+            drawTxt(cv, unitStr, rx + dw + 6, distY - 2, 20, '#7dc4ff', { font: 'bold', align: 'left' });
         }
 
         const fallbackRoad = guide.kind === 'destination'
@@ -2376,17 +2434,20 @@ class OverlayRenderer {
             : ((guide.kind === 'turn' && guide.dir === 'STRAIGHT_ON') ? tr('Continue straight') : tr('Ahead'));
         const roadRaw = (guide.road && String(guide.road).trim()) ? String(guide.road).trim() : fallbackRoad;
         const rFit = fitTextLine(cv, roadRaw, Math.max(60, rightEdge - rx), [22, 19, 17, 15], 'bold');
-        drawTextClean(cv, rFit.text, rx, Math.round(cv.h * 0.80), rFit.size, '#dbe7f5', { font: 'bold', align: 'left' });
+        drawTxt(cv, rFit.text, rx, Math.round(cv.h * 0.80), rFit.size, '#dbe7f5', { font: 'bold', align: 'left' });
         return true;
     }
 
-    _paintClusterEtaPill(cv, eta, units) {
+    _paintClusterEtaPill(cv, eta, units, showPlate) {
         cv.clear(COL.clear);
         if (!eta || (!eta.text && typeof eta.remainMeters !== 'number')) return false;
 
-        const rad = Math.floor((cv.h - 2) / 2);
-        cv.roundRect(1, 1, cv.w - 2, cv.h - 2, rad, [10, 18, 30, 220]);
-        cv.strokeRoundRect(1, 1, cv.w - 2, cv.h - 2, rad, 1.5, [82, 138, 198, 118]);
+        const plateOn = showPlate !== false;
+        if (plateOn) {
+            const rad = Math.floor((cv.h - 6) / 2);
+            paintNaturalGlassPlate(cv, rad, { alpha: 174 });
+        }
+        const drawTxt = plateOn ? drawTextClean : drawTextOutline;
 
         const isZh = getLanguage() === 'zh-CN';
         const etaPrefix = eta.text ? (isZh ? (eta.text + ' \u5230\u8fbe') : ('ETA ' + eta.text)) : '';
@@ -2421,11 +2482,11 @@ class OverlayRenderer {
         if (etaPrefix && fit.text.indexOf(etaPrefix) === 0) {
             const fullW = cv.textWidth(fit.text, fit.size, { font: 'bold' });
             const startX = Math.max(14, Math.round((cv.w - fullW) / 2));
-            const pw = drawTextClean(cv, etaPrefix, startX, baseY, fit.size, '#5bc8ff', { font: 'bold', align: 'left' });
+            const pw = drawTxt(cv, etaPrefix, startX, baseY, fit.size, '#5bc8ff', { font: 'bold', align: 'left' });
             const rem = fit.text.slice(etaPrefix.length);
-            if (rem) drawTextClean(cv, rem, startX + pw, baseY, fit.size, COL.white, { font: 'bold', align: 'left' });
+            if (rem) drawTxt(cv, rem, startX + pw, baseY, fit.size, COL.white, { font: 'bold', align: 'left' });
         } else {
-            drawTextClean(cv, fit.text, Math.round(cv.w / 2), baseY, fit.size, COL.white, { font: 'bold', align: 'center' });
+            drawTxt(cv, fit.text, Math.round(cv.w / 2), baseY, fit.size, COL.white, { font: 'bold', align: 'center' });
         }
         return true;
     }
