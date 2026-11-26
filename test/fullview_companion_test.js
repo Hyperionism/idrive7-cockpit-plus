@@ -94,13 +94,44 @@ function testActivateAndDeactivateWithExistingLocalConf() {
   fs.rmSync(tmp, { recursive: true, force: true });
 }
 
+function testRepairAndRestoreStaleClusterRenderLocalConf() {
+  const tmp = mkTempDir();
+  const wocDir = path.join(tmp, 'waze-on-cluster');
+  const crDir = path.join(tmp, 'cluster-render');
+  const mockLog = path.join(tmp, 'systemctl.log');
+  fs.mkdirSync(wocDir, { recursive: true }); // open-source woc: no vehicles/ID7.conf
+  fs.mkdirSync(crDir, { recursive: true });
+  const staleCr = 'panel_scene_id = 0x010004f0\npanel_fallback_scene_id = 0x01000400\n';
+  fs.writeFileSync(path.join(crDir, 'cluster-render.local.conf'), staleCr, 'utf8');
+
+  const actRes = activate({ wocDir, crDir, skipSystemctl: true, mockLog });
+  assert.ok(actRes.status.includes('repaired stale cluster-render.local.conf'), 'must report stale cluster-render repair');
+  const repaired = fs.readFileSync(path.join(crDir, 'cluster-render.local.conf'), 'utf8');
+  assert.ok(/^\s*panel_scene_id\s*=\s*0x010004f8\s*$/m.test(repaired), 'must repair panel_scene_id to 0x010004f8');
+  assert.strictEqual(fs.readFileSync(path.join(crDir, 'cluster-render.local.conf.cockpit-bak'), 'utf8'), staleCr);
+
+  // Idempotent second run must not clobber backup
+  activate({ wocDir, crDir, skipSystemctl: true, mockLog });
+  assert.strictEqual(fs.readFileSync(path.join(crDir, 'cluster-render.local.conf.cockpit-bak'), 'utf8'), staleCr);
+
+  const deactRes = deactivate({ wocDir, crDir, skipSystemctl: true, mockLog });
+  assert.ok(deactRes.status.includes('Restored'));
+  assert.strictEqual(fs.readFileSync(path.join(crDir, 'cluster-render.local.conf'), 'utf8'), staleCr);
+  assert.strictEqual(fs.existsSync(path.join(crDir, 'cluster-render.local.conf.cockpit-bak')), false);
+
+  const calls = fs.readFileSync(mockLog, 'utf8').trim().split(/\r?\n/);
+  assert.ok(calls.includes('systemctl try-restart cluster-render.service'), 'must try-restart cluster-render.service');
+  fs.rmSync(tmp, { recursive: true, force: true });
+}
+
 function testActivateNoOpWhenWazeAbsent() {
   const tmp = mkTempDir();
   const missingWoc = path.join(tmp, 'does-not-exist');
-  const res = activate({ wocDir: missingWoc, skipSystemctl: true });
+  const missingCr = path.join(tmp, 'cr-absent');
+  const res = activate({ wocDir: missingWoc, crDir: missingCr, skipSystemctl: true });
   assert.ok(res.status.includes('skipped'));
   assert.strictEqual(fs.existsSync(missingWoc), false);
-  const deact = deactivate({ wocDir: missingWoc, skipSystemctl: true });
+  const deact = deactivate({ wocDir: missingWoc, crDir: missingCr, skipSystemctl: true });
   assert.ok(deact.status.includes('nothing to restore'));
   fs.rmSync(tmp, { recursive: true, force: true });
 }
@@ -127,6 +158,8 @@ function testAppRequiresAndSchema2Catalog() {
   const appEntry = catalog.components.find((c) => c.id === 'id7_cockpit_plus');
   assert.ok(toolEntry && toolEntry.kind === 'tool' && toolEntry.artifact && toolEntry.artifact.sha256);
   assert.ok(appEntry && appEntry.kind === 'app' && appEntry.artifact && appEntry.artifact.sha256);
+  assert.ok(toolEntry.texts && toolEntry.texts['zh-CN'] && toolEntry.texts['zh-CN'].title, 'tool catalog entry must include zh-CN texts');
+  assert.ok(appEntry.texts && appEntry.texts['zh-CN'] && appEntry.texts['zh-CN'].title, 'app catalog entry must include zh-CN texts');
   assert.strictEqual(appEntry.requires['cockpit-fullview'], toolEntry.version);
 
   const toolTgz = path.join(ROOT, 'dist', toolEntry.artifact.name);
@@ -218,7 +251,7 @@ function testOverlayRendererFullviewMapHost() {
     pixels() { return true; }
     set(ref, opts) { calls.sets.push({ ref, opts }); }
     host(into, opts) { calls.hosts.push({ into, opts }); }
-    unhost(into, target) { calls.unhosts.push({ into, target }); }
+    unhost(target) { calls.unhosts.push(target); }
   }
 
   const r = new OverlayRenderer({ ClusterRender: StubCR, allowPanel: true });
@@ -241,7 +274,7 @@ function testOverlayRendererFullviewMapHost() {
   assert.ok(calls.sets.some((s) => s.ref === calls.effects[0].ref && s.opts.visible === false));
 
   r.render(model, { enabled: true, clusterSlotMode: 'panel_only', mapHostMode: 'off' }, 1200);
-  assert.deepStrictEqual(calls.unhosts, [{ into: 'panel', target: 'map' }]);
+  assert.deepStrictEqual(calls.unhosts, ['map'], 'unhost must follow real ClusterRender.unhost(target) 1-arg signature');
   r.close();
 }
 
@@ -267,13 +300,29 @@ function testSimplifiedChineseLocaleAndPackage() {
   assert.ok(vals.includes('通用设置') && vals.includes('全屏地图与导航布局'), 'RHMI StringBundle must contain Simplified Chinese titles');
   assert.ok(Object.prototype.hasOwnProperty.call(bundleStrings, 'SID_CN_DYNAMIC_0000'), 'SID_CN_DYNAMIC pool must be pre-allocated');
 
+  // Verify 100% of app.json UI strings have zh-CN translations
+  const appSpec = JSON.parse(fs.readFileSync(path.join(ROOT, 'apps', 'id7_cockpit_plus', 'app.json'), 'utf8'));
+  const zhDict = JSON.parse(fs.readFileSync(path.join(ROOT, 'vendor', 'cauliflowermossgrape-idrive7-apps', 'kit', 'runtime', 'locales', 'zh-CN.json'), 'utf8'));
+  const missingAppKeys = [];
+  const checkKey = (s) => { if (s && /[A-Za-z]/.test(s) && !zhDict[s]) missingAppKeys.push(s); };
+  checkKey(appSpec.title);
+  for (const sc of appSpec.screens || []) {
+    checkKey(sc.title);
+    for (const it of sc.items || []) if (it[2]) checkKey(it[2]);
+    for (const it of sc.settings || []) if (Array.isArray(it) && it[2]) checkKey(it[2]);
+  }
+  for (const st of appSpec.settings || []) {
+    checkKey(st.label);
+    for (const opt of st.options || []) checkKey(opt[1]);
+  }
+  assert.strictEqual(missingAppKeys.length, 0, 'Missing zh-CN translations for app.json keys: ' + missingAppKeys.join(', '));
+
   // Verify every Chinese translation character in zh-CN.json is covered by baked cjk_gothic.pack
   const { Canvas } = require(path.join(ROOT, 'vendor', 'cauliflowermossgrape-idrive7-apps', 'kit', 'runtime', 'canvas'));
   const fontsMod = require(path.join(ROOT, 'vendor', 'cauliflowermossgrape-idrive7-apps', 'kit', 'runtime', 'fonts'));
   const { installStockBmwFonts } = require(path.join(ROOT, 'apps', 'id7_cockpit_plus', 'bmw_font'));
   installStockBmwFonts(fontsMod, { cacheDir: os.tmpdir(), fontDir: path.join(ROOT, 'apps', 'id7_cockpit_plus') });
   const cv = new Canvas(400, 100);
-  const zhDict = JSON.parse(fs.readFileSync(path.join(ROOT, 'vendor', 'cauliflowermossgrape-idrive7-apps', 'kit', 'runtime', 'locales', 'zh-CN.json'), 'utf8'));
   const missing = [];
   for (const val of Object.values(zhDict)) {
     for (const ch of val) {
@@ -283,12 +332,23 @@ function testSimplifiedChineseLocaleAndPackage() {
     }
   }
   assert.strictEqual(missing.length, 0, 'Missing CJK glyphs in cjk_gothic.pack: ' + missing.join(','));
+
+  // Verify HUD road banner preserves Chinese road names instead of stripping via foldAscii
+  const builtJsDir = path.join(ROOT, 'dist', 'id7_cockpit_plus', 'source', 'javascript');
+  const { drawHudRoadBanner, cleanDisplayText, ROAD_W, ROAD_H } = require(path.join(builtJsDir, 'hud_nav_renderer.js'));
+  assert.strictEqual(cleanDisplayText('进入 非机动车道'), '进入 非机动车道');
+  const roadCv = new Canvas(ROAD_W, ROAD_H);
+  assert.strictEqual(drawHudRoadBanner(roadCv, { road: '中环高架路' }), true, 'HUD road banner must render Chinese road names');
+  let litPx = 0;
+  for (let i = 3; i < roadCv.d.length; i += 4) if (roadCv.d[i] > 100) litPx++;
+  assert.ok(litPx > 200, 'HUD Chinese road name must produce visible glyphs (got ' + litPx + ' px)');
 }
 
 function main() {
   const tests = [
     testBuildCockpitProfileDisablesPodsOnly,
     testActivateAndDeactivateWithExistingLocalConf,
+    testRepairAndRestoreStaleClusterRenderLocalConf,
     testActivateNoOpWhenWazeAbsent,
     testOverlayRendererFullviewMapHost,
     testAppRequiresAndSchema2Catalog,
