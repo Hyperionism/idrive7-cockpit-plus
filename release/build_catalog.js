@@ -303,6 +303,12 @@ function main() {
       kind: 'tool',
       title: toolManifest.title,
       description: toolManifest.description,
+      texts: {
+        'zh-CN': {
+          title: 'Cockpit+ 全屏地图伴侣工具',
+          description: '为 Cockpit+ 自动配置全屏 1632x720 仪表地图托管环境，自动修复旧版 cluster-render.local.conf 冲突并可逆关闭重叠的 C++ 浮窗'
+        }
+      },
       author: toolManifest.author,
       version: toolManifest.version,
       artifact: {
@@ -319,6 +325,12 @@ function main() {
       kind: 'app',
       title: appManifest.title,
       description: appManifest.description,
+      texts: {
+        'zh-CN': {
+          title: 'Cockpit+ 驾驶舱增强',
+          description: 'BMW iDrive 7 全开源仪表全屏导航与驾驶舱套件：原生托管 1632x720 CarPlay/高德/百度全屏地图，内置 5AU 顶部车道引导、居中转向卡、底部 ETA 胶囊、无框数字车速、右侧媒体/行程/胎压卡片与 HUD 导航（简体中文界面）'
+        }
+      },
       author: appManifest.author,
       version: appManifest.version,
       artifact: {
