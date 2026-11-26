@@ -113,7 +113,7 @@ const ipcServer = net.createServer((socket) => {
         try { cmd = JSON.parse(payload.toString('utf8')); } catch (e) { rpcErrorCount++; return; }
 
         if (cmd.op === 'hello') {
-            sendSocketEvent(socket, { ev: 'hello', backend: 'bench', targets: 'hud panel map', proto: 1 });
+            sendSocketEvent(socket, { ev: 'hello', backend: 'bench', targets: 'hud panel map', host_layers: 1, proto: 1 });
         } else if (cmd.op === 'layer') {
             let ownedCount = 0;
             activeLayers.forEach((l) => { if (l.connId === connId) ownedCount++; });
