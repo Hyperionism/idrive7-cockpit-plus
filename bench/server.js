@@ -40,6 +40,8 @@ let workerProc = null;
 let latestStatusText = '';
 let latestSettings = null;
 let latestTelemetry = null;
+let activeHost = null;
+let bezelFeatherPx = 168;
 let rpcErrorCount = 0;
 
 function emitLog(level, message) {
@@ -75,6 +77,7 @@ function serializeScene() {
             ref: l.ref,
             target: l.target,
             klass: l.klass,
+            kind: l.kind,
             z: l.z,
             x: l.x,
             y: l.y,
@@ -149,7 +152,31 @@ const ipcServer = net.createServer((socket) => {
             activeLayers.set(id, entry);
             sendSocketEvent(socket, { ev: 'layer', ref: cmd.ref, state: entry.visible ? 'shown' : 'hidden' });
             pushSse({ t: 'scene', layers: serializeScene(), pixels: allocatedBytes() });
-        } else if (cmd.op === 'host' || cmd.op === 'unhost' || cmd.op === 'uniform' || cmd.op === 'bind') {
+        } else if (cmd.op === 'host') {
+            activeHost = {
+                into: cmd.into || 'panel',
+                target: cmd.target || 'map',
+                x: Number(cmd.x) || 0,
+                y: Number(cmd.y) || 0,
+                w: Number(cmd.w) || 1632,
+                h: Number(cmd.h) || 720,
+                shown: cmd.shown !== 0,
+            };
+            pushSse({ t: 'host', host: activeHost, feather: bezelFeatherPx });
+        } else if (cmd.op === 'unhost') {
+            if (!cmd.target || (activeHost && activeHost.target === cmd.target)) {
+                activeHost = null;
+            }
+            pushSse({ t: 'host', host: activeHost, feather: bezelFeatherPx });
+        } else if (cmd.op === 'uniform') {
+            if (cmd.name === 'u_feather') {
+                const fv = parseFloat(cmd.v);
+                if (isFinite(fv) && fv > 1) {
+                    bezelFeatherPx = fv;
+                    pushSse({ t: 'host', host: activeHost, feather: bezelFeatherPx });
+                }
+            }
+        } else if (cmd.op === 'bind') {
             // Accepted cleanly by bench simulator
         } else if (cmd.op === 'set') {
             const entry = activeLayers.get(connId + ':' + cmd.ref);
@@ -253,7 +280,8 @@ function findPython() {
 
 function launchWorker() {
     const pyBin = findPython();
-    const buildOut = execFileSync(pyBin, [BUILD_SCRIPT, '--app-root', ROOT_DIR, '--stub-sdk', APP_ID], {
+    const benchLang = process.env.BENCH_LANG || 'zh-CN';
+    const buildOut = execFileSync(pyBin, [BUILD_SCRIPT, '--app-root', ROOT_DIR, '--language', benchLang, '--stub-sdk', APP_ID], {
         cwd: ROOT_DIR,
         env: Object.assign({}, process.env, { OAP_STUB_SDK: '1' }),
         stdio: ['ignore', 'pipe', 'pipe'],
@@ -359,6 +387,7 @@ const httpServer = http.createServer(async (req, res) => {
         req.on('close', () => eventStreams.delete(res));
         pushSse({ t: 'hello', targets: DISPLAY_TARGETS, geometry: visible }, res);
         pushSse({ t: 'scene', layers: serializeScene(), pixels: allocatedBytes() }, res);
+        pushSse({ t: 'host', host: activeHost, feather: bezelFeatherPx }, res);
         activeLayers.forEach((l) => pushSse({ t: 'px', key: l.key, iw: l.iw, ih: l.ih, x: 0, y: 0, w: l.iw, h: l.ih }, res));
         if (latestSettings) pushSse(latestSettings, res);
         if (latestStatusText) pushSse({ t: 'status', s: latestStatusText }, res);

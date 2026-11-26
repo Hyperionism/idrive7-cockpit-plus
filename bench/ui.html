@@ -67,23 +67,24 @@
 </style>
 </head>
 <body>
-  <h1>Cluster+ · Instrument Cluster &amp; HUD Bench Simulator</h1>
-  <div class="sub">Photo-exact 1920&times;720 G30 530e Live Cockpit Professional &amp; 800&times;480 HUD compositor bench (assumes iDrive <em>Displays &rarr; Instrument panel &rarr; Second speed = Off</em>).</div>
+  <h1>Cockpit+ · BMW G20 330i (KOMBI4 + HUD) 本地实时预览台</h1>
+  <div class="sub">1920&times;720 G20 330i B48 纯燃油（公制 km/h · L/100km · °C · bar）全屏导航 + 800&times;480 HUD 合成模拟器</div>
 
   <div class="toolbar">
-    <label><input type="checkbox" id="carView" checked> Car View (Real 530e Cluster + HUD)</label>
-    <label>Cluster Scene:
+    <label><input type="checkbox" id="carView" checked> 显示实车表圈框架</label>
+    <label>仪表底图:
       <select id="clusterStyle">
-        <option value="media" selected>530e Driving + Full Album Art</option>
-        <option value="edrive">530e Driving + eDrive Widget</option>
-        <option value="autohold">530e Metric + G-Meter + AUTO H</option>
-        <option value="telltales">530e Startup + All Warning Telltales</option>
+        <option value="alpina" selected>G20 330i 阿尔宾娜 KOMBI4 (FullView 1632×720)</option>
+        <option value="media">对比：530e 混动实拍 + 媒体封面</option>
+        <option value="edrive">对比：530e 混动实拍 + eDrive</option>
+        <option value="autohold">对比：530e 公制实拍 + AUTO H</option>
+        <option value="telltales">对比：530e 警示灯实拍</option>
       </select>
     </label>
     <label>Map Source:
       <select id="mapSource">
-        <option value="bmw" selected>BMW Built-in Map</option>
-        <option value="carplay">CarPlay / AA (waze-on-cluster)</option>
+        <option value="carplay" selected>CarPlay / 全屏地图 (waze-on-cluster)</option>
+        <option value="bmw">BMW 原车地图背景</option>
       </select>
     </label>
     <label title="Preview overlap if BMW's optional secondary km/h box is left enabled"><input type="checkbox" id="bmwSecondSpeed"> BMW Second Speed (km/h)</label>
@@ -151,57 +152,52 @@ const hudCtx = hudCv.getContext('2d');
 
 let carView = true;
 let showGuides = false;
-let clusterStyle = 'media';
-let mapSource = 'bmw';
+let clusterStyle = 'alpina';
+let mapSource = 'carplay';
 let bmwSecondSpeed = false;
 let simMode = 'demo';
 let activePreset = 'demo';
 let geometry = {};
+let hostState = null;
+let bezelFeather = 168;
 let layers = new Map();       // key -> meta
 let layerCanvases = new Map(); // key -> HTMLCanvasElement (offscreen RGBA image)
 let latestSettings = null;
 let telemetry = {
-  speedKmh: 108, rpm: 0, gear: 5, stage: 'D', program: 'D',
-  hvKw: 14.2, soc: 68, battTempC: 23.5, oilTempC: 48, coolantTempC: 73,
-  boostBar: 0, gLong: 0.02, pedalPct: 18, driverBraking: false, absActive: false,
-  frictionG: 0, pureRegen: false, erangeKm: 31, frangeKm: 410, ambientC: 21.5,
-  driveMode: 'comfort', isEv: true, tyreFlBar: 2.4,
+  speedKmh: 62, rpm: 1850, gear: 5, stage: 'D', program: 'D',
+  hvKw: null, soc: null, battTempC: null, oilTempC: 92, coolantTempC: 90,
+  boostBar: 0.28, gLong: 0.02, pedalPct: 22, driverBraking: false, absActive: false,
+  frictionG: 0, pureRegen: false, erangeKm: null, frangeKm: 410, ambientC: 18.5,
+  driveMode: 'comfort', isEv: false, tyreFlBar: 2.4,
 };
 
 let manualState = {
-  speed: 108, rpm: 0, gear: 5, program: 'D', hvKw: 14.2, soc: 68, battTemp: 23.5,
-  oil: 48, coolant: 73, boost: 0, gLong: 0.02, pedalPct: 18,
-  driverBraking: false, absActive: false, tyreFlBar: 2.4,
+  speed: 62, rpm: 1850, gear: 5, stage: 'D', program: 'D',
+  oil: 92, coolant: 90, boost: 0.28, gLong: 0.02, pedalPct: 22,
+  driverBraking: false, absActive: false, tyreFlBar: 2.4, navActive: true,
 };
 
 const PRESETS = [
-  { id: 'demo', label: 'Demo (48s Cycle)', mode: 'demo' },
-  { id: 'ev_sweet', label: 'EV Sweet-Spot (67 mph)', mode: 'manual', v: { speed: 108, rpm: 0, gear: 5, program: 'D', hvKw: 14.2, soc: 68, battTemp: 23.5, oil: 48, coolant: 73, boost: 0, gLong: 0.02, pedalPct: 18, driverBraking: false, absActive: false, tyreFlBar: 2.4 } },
-  { id: 'pure_regen', label: 'EV Pure Regen', mode: 'manual', v: { speed: 54, rpm: 0, gear: 4, program: 'D', hvKw: -26.0, soc: 69, battTemp: 24.0, oil: 48, coolant: 73, boost: 0, gLong: -0.11, pedalPct: 0, driverBraking: true, absActive: false, tyreFlBar: 2.4 } },
-  { id: 'blended_brake', label: 'Blended Friction Brake', mode: 'manual', v: { speed: 36, rpm: 0, gear: 3, program: 'D', hvKw: -22.0, soc: 69, battTemp: 24.5, oil: 48, coolant: 73, boost: 0, gLong: -0.34, pedalPct: 0, driverBraking: true, absActive: false, tyreFlBar: 2.4 } },
-  { id: 'hard_brake_abs', label: 'Hard Brake + ABS', mode: 'manual', v: { speed: 78, rpm: 0, gear: 5, program: 'D', hvKw: -18.0, soc: 65, battTemp: 25.0, oil: 52, coolant: 74, boost: 0, gLong: -0.58, pedalPct: 0, driverBraking: true, absActive: true, tyreFlBar: 2.4 } },
-  { id: 'cold_batt', label: 'Cold Batt (37°F)', mode: 'manual', v: { speed: 58, rpm: 0, gear: 4, program: 'D', hvKw: 18.0, soc: 52, battTemp: 3.0, oil: 36, coolant: 60, boost: 0, gLong: 0.02, pedalPct: 24, driverBraking: false, absActive: false, tyreFlBar: 2.4 } },
-  { id: 'hot_batt', label: 'Hot Batt (108°F)', mode: 'manual', v: { speed: 74, rpm: 0, gear: 5, program: 'D', hvKw: 16.5, soc: 44, battTemp: 42.0, oil: 65, coolant: 82, boost: 0, gLong: 0.02, pedalPct: 20, driverBraking: false, absActive: false, tyreFlBar: 2.4 } },
-  { id: 'cold_gas', label: 'Cold Gas (D6)', mode: 'manual', v: { speed: 98, rpm: 2350, gear: 6, program: 'D', hvKw: 2.1, soc: 14, battTemp: 24.0, oil: 48, coolant: 73, boost: 0.24, gLong: 0.04, pedalPct: 28, driverBraking: false, absActive: false, tyreFlBar: 2.4 } },
-  { id: 'ice_charge', label: 'Low SoC · ICE Charging (+6.4 kW)', mode: 'manual', v: { speed: 102, rpm: 1780, gear: 7, program: 'D', hvKw: -6.4, soc: 11, battTemp: 25.0, oil: 92, coolant: 90, boost: 0.14, gLong: 0.02, pedalPct: 24, driverBraking: false, absActive: false, tyreFlBar: 2.4 } },
-  { id: 'warm_boost', label: 'Warm Gas + Boost (D5)', mode: 'manual', v: { speed: 104, rpm: 2950, gear: 5, program: 'D', hvKw: 4.5, soc: 18, battTemp: 25.0, oil: 94, coolant: 92, boost: 0.58, gLong: 0.22, pedalPct: 55, driverBraking: false, absActive: false, tyreFlBar: 2.4 } },
-  { id: 'sport_s4', label: 'Sport S4 (No Digit)', mode: 'manual', v: { speed: 82, rpm: 2650, gear: 4, program: 'S', hvKw: 3.0, soc: 20, battTemp: 26.0, oil: 96, coolant: 92, boost: 0.36, gLong: 0.08, pedalPct: 35, driverBraking: false, absActive: false, tyreFlBar: 2.4 } },
-  { id: 'low_tpms', label: 'Low FL Tire (28 psi)', mode: 'manual', v: { speed: 72, rpm: 0, gear: 5, program: 'D', hvKw: 14.0, soc: 62, battTemp: 23.0, oil: 48, coolant: 73, boost: 0, gLong: 0.02, pedalPct: 18, driverBraking: false, absActive: false, tyreFlBar: 1.93 } },
+  { id: 'demo', label: 'G20 330i 演示循环 (Demo)', mode: 'demo' },
+  { id: 'city_nav', label: '城市导航巡航 (62 km/h · D5)', mode: 'manual', v: { speed: 62, rpm: 1850, gear: 5, stage: 'D', program: 'D', oil: 92, coolant: 90, boost: 0.24, gLong: 0.02, pedalPct: 20, driverBraking: false, absActive: false, tyreFlBar: 2.4, navActive: true } },
+  { id: 'hwy_cruise', label: '高速巡航 (120 km/h · D8)', mode: 'manual', v: { speed: 120, rpm: 2050, gear: 8, stage: 'D', program: 'D', oil: 98, coolant: 92, boost: 0.36, gLong: 0.01, pedalPct: 24, driverBraking: false, absActive: false, tyreFlBar: 2.4, navActive: true } },
+  { id: 'cold_warm', label: '冷车暖机 (机油 52°C · D4)', mode: 'manual', v: { speed: 48, rpm: 2100, gear: 4, stage: 'D', program: 'D', oil: 52, coolant: 76, boost: 0.16, gLong: 0.03, pedalPct: 24, driverBraking: false, absActive: false, tyreFlBar: 2.4, navActive: true } },
+  { id: 'sport_boost', label: 'Sport 急加速 (0.95 bar · S4)', mode: 'manual', v: { speed: 108, rpm: 4250, gear: 4, stage: 'D', program: 'S', oil: 102, coolant: 94, boost: 0.95, gLong: 0.28, pedalPct: 72, driverBraking: false, absActive: false, tyreFlBar: 2.4, navActive: true } },
+  { id: 'hard_brake', label: '重刹 + ABS (0.58g)', mode: 'manual', v: { speed: 78, rpm: 1650, gear: 5, stage: 'D', program: 'D', oil: 94, coolant: 91, boost: 0, gLong: -0.58, pedalPct: 0, driverBraking: true, absActive: true, tyreFlBar: 2.4, navActive: true } },
+  { id: 'low_tpms', label: '左前胎压偏低 (1.9 bar)', mode: 'manual', v: { speed: 68, rpm: 1900, gear: 5, stage: 'D', program: 'D', oil: 92, coolant: 90, boost: 0.22, gLong: 0.02, pedalPct: 20, driverBraking: false, absActive: false, tyreFlBar: 1.9, navActive: true } },
+  { id: 'park_idle', label: '停车怠速 (P 档)', mode: 'manual', v: { speed: 0, rpm: 740, gear: 0, stage: 'P', program: 'D', oil: 88, coolant: 90, boost: 0, gLong: 0, pedalPct: 0, driverBraking: true, absActive: false, tyreFlBar: 2.4, navActive: false } },
 ];
 
 const SLIDERS = [
-  { key: 'speed', label: 'Speed (km/h)', min: 0, max: 180, step: 1 },
-  { key: 'rpm', label: 'ICE RPM', min: 0, max: 6800, step: 50 },
-  { key: 'gear', label: 'Gear (1-8)', min: 1, max: 8, step: 1 },
-  { key: 'hvKw', label: 'HV kW (-regen/+drv)', min: -50, max: 83, step: 0.5 },
-  { key: 'soc', label: 'HV SoC %', min: 0, max: 100, step: 1 },
-  { key: 'battTemp', label: 'Batt Temp (°C)', min: -5, max: 50, step: 0.5 },
-  { key: 'oil', label: 'Oil Temp (°C)', min: 20, max: 135, step: 1 },
-  { key: 'coolant', label: 'Coolant (°C)', min: 30, max: 120, step: 1 },
-  { key: 'boost', label: 'Boost (bar)', min: 0, max: 1.5, step: 0.02 },
-  { key: 'gLong', label: 'gLong (-brake/+acc)', min: -0.75, max: 0.5, step: 0.01 },
-  { key: 'pedalPct', label: 'Pedal (%)', min: 0, max: 100, step: 1 },
-  { key: 'tyreFlBar', label: 'FL Tire (bar)', min: 1.4, max: 3.0, step: 0.05 },
+  { key: 'speed', label: '车速 (km/h)', min: 0, max: 260, step: 1 },
+  { key: 'rpm', label: '转速 (RPM)', min: 0, max: 7000, step: 50 },
+  { key: 'gear', label: '档位 (1-8)', min: 1, max: 8, step: 1 },
+  { key: 'boost', label: '涡轮增压 (bar)', min: 0, max: 1.5, step: 0.02 },
+  { key: 'oil', label: '机油温度 (°C)', min: 20, max: 135, step: 1 },
+  { key: 'coolant', label: '水温 (°C)', min: 30, max: 120, step: 1 },
+  { key: 'gLong', label: '纵向 G 值 (-刹车/+加速)', min: -0.75, max: 0.5, step: 0.01 },
+  { key: 'pedalPct', label: '油门踏板 (%)', min: 0, max: 100, step: 1 },
+  { key: 'tyreFlBar', label: '左前胎压 (bar)', min: 1.4, max: 3.0, step: 0.05 },
 ];
 
 function buildUiControls() {
@@ -235,8 +231,12 @@ function buildUiControls() {
 
   const progDiv = document.createElement('div');
   progDiv.className = 'ctrl';
-  progDiv.innerHTML = '<span>Shifter</span><select id="sel_program"><option value="D">D</option><option value="S">S</option><option value="M">M</option></select>';
-  progDiv.querySelector('select').onchange = (ev) => {
+  progDiv.innerHTML = '<span>挡位 / 驾驶模式</span><div class="ctrl-row"><select id="sel_stage"><option value="D">D</option><option value="P">P</option><option value="R">R</option><option value="N">N</option></select><select id="sel_program"><option value="D">D (Comfort)</option><option value="S">S (Sport)</option><option value="M">M (手动)</option></select></div>';
+  progDiv.querySelector('#sel_stage').onchange = (ev) => {
+    manualState.stage = ev.target.value;
+    pushManual();
+  };
+  progDiv.querySelector('#sel_program').onchange = (ev) => {
     manualState.program = ev.target.value;
     pushManual();
   };
@@ -244,10 +244,12 @@ function buildUiControls() {
 
   const brDiv = document.createElement('div');
   brDiv.className = 'ctrl';
-  brDiv.innerHTML = '<label><input type="checkbox" id="chk_driverBraking"> Driver Braking</label>' +
-    '<label><input type="checkbox" id="chk_absActive"> ABS Active</label>';
+  brDiv.innerHTML = '<label><input type="checkbox" id="chk_driverBraking"> 刹车踏板</label>' +
+    '<label><input type="checkbox" id="chk_absActive"> ABS 介入</label>' +
+    '<label><input type="checkbox" id="chk_navActive" checked> 导航路线 (5AU/转向卡/ETA)</label>';
   brDiv.querySelector('#chk_driverBraking').onchange = (ev) => { manualState.driverBraking = ev.target.checked; pushManual(); };
   brDiv.querySelector('#chk_absActive').onchange = (ev) => { manualState.absActive = ev.target.checked; pushManual(); };
+  brDiv.querySelector('#chk_navActive').onchange = (ev) => { manualState.navActive = ev.target.checked; pushManual(); };
   mBox.appendChild(brDiv);
 }
 
@@ -264,12 +266,16 @@ function syncSliders() {
     if (r) r.value = manualState[s.key];
     if (v) v.textContent = manualState[s.key];
   });
+  const stg = document.getElementById('sel_stage');
+  if (stg) stg.value = manualState.stage || 'D';
   const sel = document.getElementById('sel_program');
   if (sel) sel.value = manualState.program;
   const br = document.getElementById('chk_driverBraking');
   if (br) br.checked = Boolean(manualState.driverBraking);
   const ab = document.getElementById('chk_absActive');
   if (ab) ab.checked = Boolean(manualState.absActive);
+  const nv = document.getElementById('chk_navActive');
+  if (nv) nv.checked = manualState.navActive !== false;
 }
 
 function applyPreset(p) {
@@ -585,17 +591,305 @@ function drawSyntheticClusterFallback(ctx) {
   ctx.restore();
 }
 
+let cachedBezelCanvas = null;
+let cachedBezelFeather = -1;
+
+function getSplitEllipseBezelCanvas(featherPx) {
+  const fPx = typeof featherPx === 'number' && featherPx > 1 ? featherPx : 168;
+  if (cachedBezelCanvas && cachedBezelFeather === fPx) return cachedBezelCanvas;
+  const cv = document.createElement('canvas');
+  cv.width = 1632;
+  cv.height = 720;
+  const ctx = cv.getContext('2d');
+  const img = ctx.createImageData(1632, 720);
+  const d = img.data;
+  const smoothstep = (e0, e1, v) => {
+    const t = Math.max(0, Math.min(1, (v - e0) / (e1 - e0)));
+    return t * t * (3 - 2 * t);
+  };
+  const f = Math.max(0.04, Math.min(0.45, fPx / 816.0));
+  for (let y = 0; y < 720; y++) {
+    const ry = y < 374 ? 354.0 : 408.0;
+    const dy = (y - 374.0) / ry;
+    const dy2 = dy * dy;
+    const botFade = 1.0 - smoothstep(0.0, 20.0, 720.0 - y);
+    const rowOff = y * 1632;
+    for (let x = 0; x < 1632; x++) {
+      const dx = (x - 816.0) / 816.0;
+      const e = Math.sqrt(dx * dx + dy2);
+      const arcA = smoothstep(1.0 - f, 1.0, e);
+      const a = Math.max(arcA, botFade);
+      if (a > 0.002) {
+        const o = (rowOff + x) * 4;
+        d[o] = 2; d[o + 1] = 4; d[o + 2] = 9;
+        d[o + 3] = Math.round(Math.min(1, a) * 255);
+      }
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  cachedBezelCanvas = cv;
+  cachedBezelFeather = fPx;
+  return cv;
+}
+
+function drawHostedFullviewMap(ctx, rect, applyBezelMask, featherPx) {
+  const rx = rect.x, ry = rect.y, rw = rect.w, rh = rect.h;
+  ctx.save();
+  ctx.beginPath();
+  if (rw < 1400) {
+    ctx.roundRect(rx, ry, rw, rh, 18);
+  } else {
+    ctx.rect(rx, ry, rw, rh);
+  }
+  ctx.clip();
+
+  // Dark 3D-perspective CarPlay / AMAP navigation base covering the exact hosted rect
+  const bgGrad = ctx.createLinearGradient(rx, ry, rx, ry + rh);
+  bgGrad.addColorStop(0, '#0a1426');
+  bgGrad.addColorStop(0.5, '#0f1e36');
+  bgGrad.addColorStop(1, '#08101e');
+  ctx.fillStyle = bgGrad;
+  ctx.fillRect(rx, ry, rw, rh);
+
+  // Perspective city blocks so user can clearly see full-bleed map extent inside outer gauge rings
+  const cx = rx + rw * 0.5;
+  ctx.fillStyle = 'rgba(24, 42, 70, 0.55)';
+  const blocks = [
+    [-640, 110, 190, 120], [-410, 140, 175, 110], [-190, 80, 160, 130], [70, 95, 170, 120], [310, 130, 185, 115], [530, 110, 180, 130],
+    [-610, 310, 200, 140], [-360, 340, 180, 120], [110, 290, 195, 135], [370, 320, 190, 140], [580, 290, 160, 150],
+    [-580, 500, 210, 130], [-300, 520, 175, 110], [140, 490, 185, 120], [420, 500, 195, 130]
+  ];
+  blocks.forEach(([ox, y, bw, bh]) => {
+    const x = cx + ox;
+    if (x + bw > rx && x < rx + rw && ry + y + bh > ry && ry + y < ry + rh) {
+      ctx.fillRect(x, ry + y, bw, bh);
+      ctx.strokeStyle = 'rgba(56, 92, 140, 0.25)';
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(x, ry + y, bw, bh);
+    }
+  });
+
+  // Secondary streets & elevated arterial roads across full 1632x720 span
+  ctx.strokeStyle = 'rgba(118, 156, 204, 0.24)';
+  ctx.lineWidth = 4;
+  for (let gx = -720; gx <= 720; gx += 180) {
+    ctx.beginPath();
+    ctx.moveTo(cx + gx * 0.72, ry);
+    ctx.lineTo(cx + gx * 1.18, ry + rh);
+    ctx.stroke();
+  }
+  for (let gy = 80; gy <= rh; gy += 115) {
+    ctx.beginPath();
+    ctx.moveTo(rx, ry + gy);
+    ctx.lineTo(rx + rw, ry + gy + (gy - rh / 2) * 0.04);
+    ctx.stroke();
+  }
+
+  // Green expressway corridor + Chinese road labels across left/center/right span
+  ctx.strokeStyle = 'rgba(34, 197, 94, 0.55)';
+  ctx.lineWidth = 7;
+  ctx.beginPath();
+  ctx.moveTo(cx + 390, ry);
+  ctx.lineTo(cx + 515, ry + rh);
+  ctx.stroke();
+
+  // Active navigation polyline + glowing guidance chevron
+  const routeY0 = ry + rh * 0.84;
+  const routeY1 = ry + rh * 0.56;
+  const routeY2 = ry + rh * 0.48;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.strokeStyle = 'rgba(37, 99, 235, 0.42)';
+  ctx.lineWidth = 24;
+  ctx.beginPath();
+  ctx.moveTo(cx + 12, routeY0);
+  ctx.lineTo(cx, routeY1);
+  ctx.lineTo(cx - 210, routeY2);
+  ctx.lineTo(cx - 270, ry + rh * 0.22);
+  ctx.stroke();
+
+  ctx.strokeStyle = '#38bdf8';
+  ctx.lineWidth = 11;
+  ctx.beginPath();
+  ctx.moveTo(cx + 12, routeY0);
+  ctx.lineTo(cx, routeY1);
+  ctx.lineTo(cx - 210, routeY2);
+  ctx.lineTo(cx - 270, ry + rh * 0.22);
+  ctx.stroke();
+
+  // Map POIs & labels (Chinese, visible inside dial arcs when FullView is active)
+  ctx.font = '600 15px "Microsoft YaHei", -apple-system, sans-serif';
+  ctx.fillStyle = 'rgba(205, 224, 245, 0.78)';
+  ctx.textAlign = 'left';
+  if (rw >= 1400) {
+    ctx.fillText('天府大道中段', cx - 565, ry + 265);
+    ctx.fillText('世纪城路', cx - 510, ry + 485);
+    ctx.fillText('绕城高速 G4202', cx + 380, ry + 245);
+    ctx.fillText('科华南路', cx + 335, ry + 455);
+  }
+  ctx.textAlign = 'center';
+  ctx.fillStyle = 'rgba(232, 242, 255, 0.88)';
+  ctx.fillText('当前位置 · 绿地468公馆', cx, routeY0 + 36);
+
+  // Car puck
+  const puckY = routeY1 + (routeY0 - routeY1) * 0.42;
+  ctx.fillStyle = '#ffffff';
+  ctx.beginPath(); ctx.arc(cx + 5, puckY, 18, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#0284c7';
+  ctx.beginPath();
+  ctx.moveTo(cx + 5, puckY - 12); ctx.lineTo(cx + 15, puckY + 10); ctx.lineTo(cx + 5, puckY + 5); ctx.lineTo(cx - 5, puckY + 10);
+  ctx.closePath(); ctx.fill();
+
+  // Apply real split-ellipse KOMBI4 bezel corner fade (BEZEL_MASK_FS parity!)
+  if (applyBezelMask && rw >= 1600 && rh >= 700) {
+    ctx.drawImage(getSplitEllipseBezelCanvas(featherPx), rx, ry);
+  }
+  ctx.restore();
+}
+
+function drawAlpinaKombiForeground(ctx) {
+  const { mph } = unitSettings();
+  const rpm = Math.max(0, telemetry.rpm || 0);
+
+  ctx.save();
+  // Clean Alpina / KOMBI4 outer dial rings ONLY (completely transparent interior — NO fake halo boxes)
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  const drawDial = (pts, labels, needleRatio, isLeft, redFromIdx) => {
+    ctx.strokeStyle = 'rgba(29, 78, 216, 0.72)';
+    ctx.lineWidth = 8;
+    ctx.beginPath();
+    ctx.moveTo(pts[0][0], pts[0][1]);
+    for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+    ctx.stroke();
+
+    ctx.strokeStyle = 'rgba(236, 244, 255, 0.94)';
+    ctx.lineWidth = 3.5;
+    ctx.beginPath();
+    ctx.moveTo(pts[0][0], pts[0][1]);
+    for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+    ctx.stroke();
+
+    if (typeof redFromIdx === 'number' && redFromIdx < pts.length - 1) {
+      ctx.strokeStyle = 'rgba(239, 68, 68, 0.92)';
+      ctx.lineWidth = 5;
+      ctx.beginPath();
+      ctx.moveTo(pts[redFromIdx][0], pts[redFromIdx][1]);
+      for (let i = redFromIdx + 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+      ctx.stroke();
+    }
+
+    ctx.fillStyle = '#f2f6fc';
+    ctx.font = '700 23px -apple-system, BlinkMacSystemFont, sans-serif';
+    ctx.textAlign = 'center';
+    labels.forEach(([lx, ly, txt]) => {
+      ctx.fillText(txt, lx, ly);
+    });
+
+    // Red Alpina needle
+    const nr = Math.max(0, Math.min(1, needleRatio));
+    const idx = Math.min(pts.length - 2, Math.floor(nr * (pts.length - 1)));
+    const frac = nr * (pts.length - 1) - idx;
+    const tx = pts[idx][0] + (pts[idx + 1][0] - pts[idx][0]) * frac;
+    const ty = pts[idx][1] + (pts[idx + 1][1] - pts[idx][1]) * frac;
+    const vx = isLeft ? tx - 86 : tx + 86;
+    const vy = ty + 24;
+    ctx.strokeStyle = '#ef4444';
+    ctx.lineWidth = 6;
+    ctx.beginPath();
+    ctx.moveTo(tx, ty);
+    ctx.lineTo(vx, vy);
+    ctx.stroke();
+  };
+
+  const leftPts = [[716, 70], [395, 96], [202, 224], [142, 360], [188, 502], [296, 594], [696, 608]];
+  const leftLabels = mph
+    ? [[215, 515, '20'], [190, 415, '40'], [220, 305, '60'], [312, 200, '100'], [465, 138, '140'], [665, 118, '200']]
+    : [[220, 515, '30'], [188, 415, '60'], [216, 305, '90'], [308, 200, '150'], [465, 138, '210'], [665, 118, '340']];
+  drawDial(leftPts.slice().reverse(), leftLabels, Math.min(1, (telemetry.speedKmh || 0) / 340), true);
+
+  const rightPts = [[1204, 70], [1525, 96], [1718, 224], [1778, 360], [1732, 502], [1624, 594], [1224, 608]];
+  const rightLabels = [[1705, 515, '1'], [1732, 415, '2'], [1704, 305, '3'], [1612, 200, '4'], [1455, 138, '6'], [1255, 118, '7']];
+  drawDial(rightPts.slice().reverse(), rightLabels, Math.min(1, rpm / 7000), false, 5);
+
+  // Lower-left Fuel gauge (1 / 1/2 / 0) & lower-right Coolant Temp gauge (ICE G20 330i — no HV battery)
+  ctx.strokeStyle = 'rgba(220, 232, 248, 0.88)';
+  ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.moveTo(154, 446); ctx.lineTo(106, 544); ctx.lineTo(182, 626); ctx.lineTo(272, 632); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(1766, 446); ctx.lineTo(1814, 544); ctx.lineTo(1738, 626); ctx.lineTo(1648, 632); ctx.stroke();
+  ctx.fillStyle = '#dce6f4';
+  ctx.font = '700 15px -apple-system, BlinkMacSystemFont, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('1', 152, 468);
+  ctx.fillText('1/2', 124, 548);
+  ctx.fillText('0', 228, 616);
+
+  // Opaque bottom OEM status bar (G20 330i ICE: fuel range, clock, COMFORT/SPORT, selector, ambient — NO ELECTRIC / EV range)
+  const barGrad = ctx.createLinearGradient(0, 628, 0, 720);
+  barGrad.addColorStop(0, 'rgba(6, 10, 16, 0.65)');
+  barGrad.addColorStop(0.28, 'rgba(6, 10, 16, 0.96)');
+  barGrad.addColorStop(1, 'rgba(4, 7, 12, 1)');
+  ctx.fillStyle = barGrad;
+  ctx.fillRect(0, 628, 1920, 92);
+
+  ctx.textAlign = 'left';
+  ctx.fillStyle = '#e8eff9';
+  ctx.font = '600 28px -apple-system, BlinkMacSystemFont, sans-serif';
+  ctx.fillText(mph ? '255 mi' : '410 km', 186, 694);
+  ctx.fillText('20:23', 362, 694);
+
+  const modeName = telemetry.program === 'S' || telemetry.driveMode === 'sport' ? 'SPORT' : 'COMFORT';
+  ctx.textAlign = 'right';
+  ctx.fillStyle = modeName === 'SPORT' ? '#f87171' : '#b7c7dc';
+  ctx.font = '700 22px -apple-system, BlinkMacSystemFont, sans-serif';
+  ctx.fillText(modeName, 1384, 696);
+
+  const stockSel = (telemetry.program === 'S' || telemetry.program === 'M')
+    ? (telemetry.program + String(Math.round(telemetry.gear || 1)))
+    : (telemetry.stage || 'D');
+  ctx.textAlign = 'left';
+  ctx.fillStyle = '#f4f7fc';
+  ctx.font = '700 40px -apple-system, BlinkMacSystemFont, sans-serif';
+  ctx.fillText(stockSel, 1402, 694);
+
+  const amb = unitSettings().cels ? '+18.5 °C' : '+65.3 °F';
+  ctx.fillStyle = '#e8eff9';
+  ctx.font = '600 28px -apple-system, BlinkMacSystemFont, sans-serif';
+  ctx.fillText(amb, 1546, 694);
+  ctx.restore();
+}
+
 function drawStockClusterBg(ctx) {
+  if (clusterStyle === 'alpina') {
+    ctx.fillStyle = '#04070d';
+    ctx.fillRect(0, 0, 1920, 720);
+    return;
+  }
   const img = sceneImages[clusterStyle] || sceneImages.media;
   if (img && img.complete && img.naturalWidth > 0) {
     ctx.drawImage(img, 0, 0, 1920, 720);
   } else {
     drawSyntheticClusterFallback(ctx);
   }
-  if (mapSource === 'carplay') {
-    drawWazeOnClusterMap(ctx);
-  }
   drawDynamicPhotoPatches(ctx);
+}
+
+function drawClusterMapAndForeground(ctx) {
+  const effectLayer = Array.from(layers.values()).find((l) => l.target === 'panel' && l.kind === 'effect' && l.visible);
+  const hosted = hostState && hostState.shown ? hostState : null;
+
+  if (mapSource === 'carplay') {
+    if (hosted) {
+      drawHostedFullviewMap(ctx, hosted, Boolean(effectLayer), bezelFeather);
+    } else {
+      // Unhosted / Map Host Off: small stock 0x100 window
+      drawHostedFullviewMap(ctx, { x: 664, y: 126, w: 528, h: 452 }, false, bezelFeather);
+    }
+  }
+
+  if (clusterStyle === 'alpina') {
+    drawAlpinaKombiForeground(ctx);
+  }
 }
 
 function drawGuides(ctx, targetName) {
@@ -669,13 +963,18 @@ function renderPanel() {
   ctx.clearRect(0, 0, 1920, 720);
   if (carView) {
     drawStockClusterBg(ctx);
+    drawClusterMapAndForeground(ctx);
   } else {
     ctx.fillStyle = '#04070c';
     ctx.fillRect(0, 0, 1920, 720);
+    if (mapSource === 'carplay' && hostState && hostState.shown) {
+      const effectLayer = Array.from(layers.values()).find((l) => l.target === 'panel' && l.kind === 'effect' && l.visible);
+      drawHostedFullviewMap(ctx, hostState, Boolean(effectLayer), bezelFeather);
+    }
   }
 
   // Composite uploaded overlay layers in z-order directly over the 1920x720 cluster
-  const list = Array.from(layers.values()).filter((l) => l.target === 'panel' && l.visible)
+  const list = Array.from(layers.values()).filter((l) => l.target === 'panel' && l.visible && l.kind !== 'effect')
     .sort((a, b) => (a.z - b.z) || (a.ref - b.ref));
   list.forEach((l) => {
     const img = layerCanvases.get(l.key);
@@ -683,7 +982,10 @@ function renderPanel() {
   });
 
   if (showGuides) drawGuides(ctx, 'panel');
-  document.getElementById('panelMeta').textContent = list.length + ' layers visible · ' + clusterStyle;
+  const hostDesc = (mapSource === 'carplay' && hostState && hostState.shown)
+    ? (hostState.w >= 1600 ? ('FullView 1632×720 · feather ' + bezelFeather + 'px') : ('Center ' + hostState.w + '×' + hostState.h))
+    : 'Native 0x100';
+  document.getElementById('panelMeta').textContent = list.length + ' layers visible · ' + hostDesc + ' · ' + clusterStyle;
 }
 
 function drawHudBg(ctx) {
@@ -807,6 +1109,10 @@ es.onmessage = (ev) => {
     const tStr = m.targets && typeof m.targets === 'object' ? Object.keys(m.targets).join(' ') : String(m.targets || '');
     document.getElementById('statPill').textContent = 'connected · ' + tStr;
     renderAll();
+  } else if (m.t === 'host') {
+    hostState = m.host || null;
+    if (typeof m.feather === 'number' && m.feather > 1) bezelFeather = m.feather;
+    renderAll();
   } else if (m.t === 'scene') {
     const next = new Map();
     (m.layers || []).forEach((l) => next.set(l.key, l));
@@ -824,8 +1130,10 @@ es.onmessage = (ev) => {
     telemetry = Object.assign(telemetry, m.v || {});
     const fg = telemetry.frictionG > 0 ? telemetry.frictionG.toFixed(2) + 'g brake' : (telemetry.pureRegen ? 'pure regen' : 'coast/drv');
     document.getElementById('telemSummary').textContent =
-      (telemetry.isEv ? 'EV' : 'ICE') + ' · ' + Math.round(telemetry.speedKmh || 0) + 'km/h · ' +
-      (telemetry.program || 'D') + (telemetry.gear || '') + ' · ' + fg;
+      'G20 330i · ' + Math.round(telemetry.speedKmh || 0) + ' km/h · ' +
+      Math.round(telemetry.rpm || 0) + ' rpm · ' +
+      (telemetry.program || 'D') + (telemetry.gear || '') + ' · ' +
+      (typeof telemetry.boostBar === 'number' ? telemetry.boostBar.toFixed(2) : '0.00') + ' bar · ' + fg;
     renderAll();
   }
 };
