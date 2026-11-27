@@ -198,6 +198,7 @@ class ClusterRender extends EventEmitter {
         this.fpsCap = 0;        /* another app's others_fps holding this one's videos (fps_cap); 0: none */
         this.fpsCapApp = '';
         this.hostLayers = false;
+        this.hostMask = false;
         this.layerHosts = new Map();   /* hosts from this app's layers: hosted target -> { into, msg } */
     }
 
@@ -317,6 +318,7 @@ class ClusterRender extends EventEmitter {
             this.backend = ev.backend;
             this.targets = ev.targets;
             this.hostEdge = ev.host_edge === 1;   /* takes a host's edge_* */
+            this.hostMask = ev.host_mask === 1;   /* takes a host's mask_mode / mask_feather */
             this.preload = ev.preload === 1;      /* knows a layer's preload */
             this.othersFps = ev.others_fps === 1;   /* knows a layer's others_fps */
             this.renderState = ev.render_state === 1;   /* takes blend factors, depth_func, color_mask */
@@ -741,6 +743,10 @@ class ClusterRender extends EventEmitter {
         }
         if (opts.edge_top || opts.edge_bottom)
             ['edge_top', 'edge_bottom', 'edge_fade', 'edge_dim', 'edge_blur'].forEach((k) => { m[k] = opts[k] || 0; });
+        if (opts.mask_mode) {
+            m.mask_mode = opts.mask_mode;
+            if (opts.mask_feather !== undefined) m.mask_feather = opts.mask_feather;
+        }
         return m;
     }
 
