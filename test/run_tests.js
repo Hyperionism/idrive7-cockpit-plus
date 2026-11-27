@@ -3282,6 +3282,170 @@ function inBox(x, y, box) {
         fs.rmSync(mockBase, { recursive: true, force: true });
     });
 
+    /* 30. FullView Host, Native 0x100 Unhost, and DstOut Alpha-Cutout Blend Contract */
+    await test('FullView host uses unhost for native/center, DstOut blend for transparent cutouts, and safe fallback without render_state', async () => {
+        const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fullview-dstout-test-'));
+        const confDir = path.join(tmpDir, 'conf');
+        fs.mkdirSync(confDir);
+        const wazeFile = path.join(tmpDir, 'waze-status.json');
+        fs.writeFileSync(wazeFile, JSON.stringify({ state: 'showing', target: 'map' }));
+
+        function makeMockCR(helloCaps) {
+            const ops = [];
+            let serverSock = null;
+            class MockCR extends ClusterRender {
+                _open() {
+                    if (this.closed || this.sock) return;
+                    const clientEnd = new EventEmitter();
+                    const serverEnd = new EventEmitter();
+                    serverSock = serverEnd;
+                    let buf = Buffer.alloc(0);
+                    const sendEv = (obj) => {
+                        const ev = Buffer.from(JSON.stringify(obj), 'utf8');
+                        const msg = Buffer.alloc(5 + ev.length);
+                        msg.writeUInt32LE(ev.length + 1, 0);
+                        msg[4] = 0x4a;
+                        ev.copy(msg, 5);
+                        setImmediate(() => clientEnd.emit('data', msg));
+                    };
+                    serverEnd.on('data', (chunk) => {
+                        buf = Buffer.concat([buf, chunk]);
+                        while (buf.length >= 5) {
+                            const len = buf.readUInt32LE(0);
+                            if (buf.length < 4 + len) break;
+                            const type = buf[4];
+                            const body = buf.slice(5, 4 + len);
+                            buf = buf.slice(4 + len);
+                            if (type === 0x4a) {
+                                const m = JSON.parse(body.toString('utf8'));
+                                ops.push(m);
+                                if (m.op === 'hello') {
+                                    sendEv(Object.assign({
+                                        ev: 'hello',
+                                        backend: 'id7',
+                                        targets: 'map:1632x720,panel:1920x720,hud:800x480',
+                                        proto: 1,
+                                    }, helloCaps));
+                                } else if (m.op === 'host') {
+                                    sendEv({ ev: 'hosting', target: m.target, into: m.into, state: 'live', reason: '' });
+                                    sendEv({ ev: 'host', target: m.target, into: m.into, shown: 1, x: m.x, y: m.y, w: m.w, h: m.h });
+                                } else if (m.op === 'unhost') {
+                                    sendEv({ ev: 'host', target: m.target, into: '', shown: 0 });
+                                }
+                            }
+                        }
+                    });
+                    clientEnd.write = (b) => { setImmediate(() => serverEnd.emit('data', Buffer.from(b))); return true; };
+                    clientEnd.destroy = () => {
+                        setImmediate(() => {
+                            clientEnd.emit('close');
+                            serverEnd.emit('close');
+                        });
+                    };
+                    this.sock = clientEnd;
+                    this.blocked = false;
+                    this.connected = false;
+                    this.inbuf = Buffer.alloc(0);
+                    clientEnd.on('data', (d) => { if (this.sock === clientEnd) this._data(d); });
+                    clientEnd.on('close', () => { if (this.sock === clientEnd) { this.sock = null; this.ready = false; this.connected = false; } });
+                    setImmediate(() => {
+                        this.connected = true;
+                        this._send({ op: 'hello', app: this.app, proto: 1 });
+                    });
+                }
+            }
+            return { MockCR, ops, closeServer: () => { if (serverSock) serverSock.removeAllListeners(); } };
+        }
+
+        const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+        const model = {
+            units: unitsMod.METRIC_PRESET,
+            profile: { vehicleType: 'ice', engineOn: true, mode: 'cruise', isEv: false, isCold: false, coldCeilingRpm: null, alert: null },
+            efficiency: { evKmPerKwh: null, fuelLPer100km: 7.4, isDfco: false },
+            telemetry: { speedKmh: 62, rpm: 1650, stage: 'D', program: 'D', gear: 5, navRouteActive: false, navHasLanes: false },
+        };
+
+        // 1. Modern cluster-render (host_layers: 1, render_state: 1)
+        const env1 = makeMockCR({ host_layers: 1, render_state: 1 });
+        const r1 = new OverlayRenderer({ ClusterRender: env1.MockCR, confDir, wazeStatusPath: wazeFile, allowPanel: true });
+        r1.connect();
+        await wait(50);
+
+        // 1a. Default fullview_dials -> hosts 1632x616 and creates z=2 DstOut cutout effect with u_mode=1
+        r1.render(model, { enabled: true }, 1000);
+        await wait(50);
+        r1.render(model, { enabled: true }, 1300);
+        await wait(50);
+
+        const hostOps1 = env1.ops.filter((o) => o.op === 'host');
+        assert(hostOps1.length >= 1, 'fullview_dials must host map on panel');
+        const lastHost1 = hostOps1[hostOps1.length - 1];
+        assert.deepStrictEqual({ into: lastHost1.into, x: lastHost1.x, y: lastHost1.y, w: lastHost1.w, h: lastHost1.h }, {
+            into: 'panel', x: 144, y: 0, w: 1632, h: 616,
+        });
+        const maskLayer = env1.ops.find((o) => o.op === 'layer' && o.kind === 'effect' && o.z === 2);
+        assert(maskLayer, 'DstOut cutout effect layer must be created');
+        assert.strictEqual(maskLayer.w, 1632);
+        assert.strictEqual(maskLayer.h, 616);
+        assert.strictEqual(maskLayer.blend, 'alpha');
+        assert.strictEqual(maskLayer.blend_src, 'zero');
+        assert.strictEqual(maskLayer.blend_dst, 'one_minus_src_alpha');
+        assert.strictEqual(maskLayer.blend_src_alpha, 'zero');
+        assert.strictEqual(maskLayer.blend_dst_alpha, 'one_minus_src_alpha');
+        assert.strictEqual(maskLayer.blend_op, 'add');
+        assert.strictEqual(maskLayer.blend_op_alpha, 'add');
+        assert.strictEqual(maskLayer.color_mask, 'rgba');
+        assert(maskLayer.fs.indexOf('u_mode') >= 0 && maskLayer.fs.indexOf('u_feather') >= 0);
+        assert.strictEqual(r1.lastSummary.bezelMaskMode, 'dials');
+
+        const modeUniforms1 = env1.ops.filter((o) => o.op === 'uniform' && o.ref === maskLayer.ref && o.name === 'u_mode');
+        assert(modeUniforms1.length >= 1 && modeUniforms1[modeUniforms1.length - 1].v === '1');
+
+        // 1b. Switch to fullview wide + bezel cutout ON -> u_mode = 0
+        r1.render(model, { enabled: true, mapHostMode: 'fullview', mapBezelMask: true }, 1600);
+        await wait(50);
+        assert.strictEqual(r1.lastSummary.bezelMaskMode, 'bezel');
+        const modeUniforms2 = env1.ops.filter((o) => o.op === 'uniform' && o.ref === maskLayer.ref && o.name === 'u_mode');
+        assert.strictEqual(modeUniforms2[modeUniforms2.length - 1].v, '0');
+
+        // 1c. Switch to fullview wide + bezel cutout OFF -> mask hidden
+        r1.render(model, { enabled: true, mapHostMode: 'fullview', mapBezelMask: false }, 1900);
+        await wait(50);
+        assert.strictEqual(r1.lastSummary.bezelMaskMode, 'off');
+        const hideMaskOps = env1.ops.filter((o) => o.op === 'set' && o.ref === maskLayer.ref && o.visible === 0);
+        assert(hideMaskOps.length >= 1, 'mask must hide when mapBezelMask is false');
+
+        // 1d. Native / legacy center / legacy off must ALL unhost map (0x100 behind dials) and NEVER host at 416,120!
+        const beforeNativeHostCount = env1.ops.filter((o) => o.op === 'host').length;
+        for (const mMode of ['native', 'center', 'off']) {
+            r1.render(model, { enabled: true, mapHostMode: mMode }, 2200);
+            await wait(30);
+            assert.strictEqual(r1.lastSummary.hostModeActive, 'native', 'legacy/native mode ' + mMode + ' must resolve to native');
+        }
+        assert.strictEqual(env1.ops.filter((o) => o.op === 'host').length, beforeNativeHostCount, 'native/center/off must NEVER call cr.host');
+        assert(env1.ops.some((o) => o.op === 'unhost' && o.target === 'map'), 'native/center must call unhost("map")');
+        assert.strictEqual(env1.ops.some((o) => o.op === 'host' && o.x === 416 && o.y === 120), false, 'center must never host onto panel 0x203');
+
+        r1.close();
+        env1.closeServer();
+
+        // 2. Older cluster-render without render_state: fullview_dials falls back to native & never paints black blobs
+        const env2 = makeMockCR({ host_layers: 1, render_state: 0 });
+        const r2 = new OverlayRenderer({ ClusterRender: env2.MockCR, confDir, wazeStatusPath: wazeFile, allowPanel: true });
+        r2.connect();
+        await wait(50);
+        r2.render(model, { enabled: true, mapHostMode: 'fullview_dials' }, 3000);
+        await wait(50);
+        assert.strictEqual(r2.lastSummary.hostModeActive, 'native', 'missing render_state must safely fall back from fullview_dials to native');
+        assert.strictEqual(env2.ops.some((o) => o.op === 'layer' && o.kind === 'effect'), false, 'must never create black effect layer without render_state');
+        assert.strictEqual(env2.ops.some((o) => o.op === 'host'), false, 'fallback must not host over dials');
+        assert(env2.ops.some((o) => o.op === 'unhost' && o.target === 'map'));
+        r2.close();
+        env2.closeServer();
+
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    });
+
     console.log('\nAll ' + passed + ' tests passed.');
     process.exit(0);
 })().catch((err) => {

@@ -265,8 +265,8 @@ function testOverlayRendererFullviewMapHost() {
 
   const calls = { hosts: [], unhosts: [], effects: [], sets: [], uniforms: [] };
   class StubCR extends EventEmitter {
-    constructor() { super(); this._next = 1; this.targets = 'map:1088x480,panel:1920x720,hud:800x480'; this.hostLayers = true; }
-    connect() { process.nextTick(() => this.emit('ready')); }
+    constructor() { super(); this._next = 1; this.targets = 'map:1088x480,panel:1920x720,hud:800x480'; this.hostLayers = true; this.renderState = true; }
+    connect() { this.emit('ready'); }
     close() {}
     image() { return this._next++; }
     effect(opts) { const ref = this._next++; calls.effects.push(Object.assign({ ref }, opts)); return ref; }
@@ -283,8 +283,8 @@ function testOverlayRendererFullviewMapHost() {
   const profile = { kind: 'ice', isPhev: false, isCold: false };
   const model = { units, profile, telemetry: { speedKmh: 62, gear: 3 }, efficiency: {} };
 
-  // 1. Before map hosting becomes live, bezelMask MUST stay hidden (never black out unhosted factory gauges!)
-  r.render(model, { enabled: true, clusterSlotMode: 'panel_only', mapHostMode: 'fullview', mapBezelMask: true }, 1000);
+  // 1. Before map hosting becomes live, bezelMask MUST stay hidden (never erase/paint unhosted factory gauges!)
+  r.render(model, { enabled: true, clusterSlotMode: 'panel_only', mapHostMode: 'fullview_dials' }, 1000);
   assert.strictEqual(calls.hosts.length, 1);
   assert.strictEqual(calls.hosts[0].into, 'panel');
   assert.deepStrictEqual(calls.hosts[0].opts, {
@@ -293,31 +293,44 @@ function testOverlayRendererFullviewMapHost() {
   assert.ok(calls.hosts[0].opts.y + calls.hosts[0].opts.h < 648, 'FullView host rect must stay strictly above KOMBI4 GEAR_WIN (y>=648)');
   assert.strictEqual(calls.effects.length, 0, 'bezelMask must NOT be created while map hosting is not live');
 
-  // 2. Once cluster-render confirms hosting is live, bezelMask activates ONLY over y=0..608 (never GEAR_WIN!)
+  // 2. Once cluster-render confirms hosting is live, fullview_dials activates DstOut alpha-erasing cutout (u_mode=1) over y=0..616
   r.cr.emit('hosting', 'map', { state: 'live' });
-  r.render(model, { enabled: true, clusterSlotMode: 'panel_only', mapHostMode: 'fullview', mapBezelMask: true }, 1020);
+  r.render(model, { enabled: true, clusterSlotMode: 'panel_only', mapHostMode: 'fullview_dials' }, 1020);
   assert.strictEqual(calls.effects.length, 1);
   assert.strictEqual(calls.effects[0].z, 2);
   assert.strictEqual(calls.effects[0].w, 1632);
-  assert.strictEqual(calls.effects[0].h, 608, 'bezelMask height must stay strictly <=608 (zero overlap with GEAR_WIN 648..720)');
-  assert.ok(calls.effects[0].fs.includes('816.0') && calls.effects[0].fs.includes('608.0') && calls.effects[0].fs.includes('u_feather') && !calls.effects[0].fs.includes('botFade'), 'bezel shader must stay clear of bottom bar & GEAR_WIN');
+  assert.strictEqual(calls.effects[0].h, 616, 'bezelMask height must cover host area while staying strictly above GEAR_WIN (648..720)');
+  assert.strictEqual(calls.effects[0].blend, 'alpha');
+  assert.strictEqual(calls.effects[0].blend_src, 'zero');
+  assert.strictEqual(calls.effects[0].blend_dst, 'one_minus_src_alpha');
+  assert.strictEqual(calls.effects[0].blend_src_alpha, 'zero');
+  assert.strictEqual(calls.effects[0].blend_dst_alpha, 'one_minus_src_alpha');
+  assert.strictEqual(calls.effects[0].blend_op, 'add');
+  assert.strictEqual(calls.effects[0].blend_op_alpha, 'add');
+  assert.strictEqual(calls.effects[0].color_mask, 'rgba');
+  assert.ok(calls.effects[0].fs.includes('616.0') && calls.effects[0].fs.includes('u_feather') && calls.effects[0].fs.includes('u_mode'));
   assert.deepStrictEqual(calls.uniforms[0], { ref: calls.effects[0].ref, name: 'u_feather', values: [54] });
+  assert.deepStrictEqual(calls.uniforms[1], { ref: calls.effects[0].ref, name: 'u_mode', values: [1] });
 
+  // Switch to FullView Wide + transparent curved bezel cutout -> u_mode=0 and feather adjusts tight/wide
   r.render(model, { enabled: true, clusterSlotMode: 'panel_only', mapHostMode: 'fullview', mapBezelMask: true, mapBezelFeather: 'tight' }, 1040);
-  assert.deepStrictEqual(calls.uniforms[1], { ref: calls.effects[0].ref, name: 'u_feather', values: [36] });
+  assert.ok(calls.uniforms.some((u) => u.ref === calls.effects[0].ref && u.name === 'u_feather' && u.values[0] === 36));
+  assert.ok(calls.uniforms.some((u) => u.ref === calls.effects[0].ref && u.name === 'u_mode' && u.values[0] === 0));
 
   r.render(model, { enabled: true, clusterSlotMode: 'panel_only', mapHostMode: 'fullview', mapBezelMask: true, mapBezelFeather: 'wide' }, 1080);
-  assert.deepStrictEqual(calls.uniforms[2], { ref: calls.effects[0].ref, name: 'u_feather', values: [80] });
+  assert.ok(calls.uniforms.some((u) => u.ref === calls.effects[0].ref && u.name === 'u_feather' && u.values[0] === 80));
 
-  // 3. Default mapBezelMask (omitted / false) hides bezelMask even while hosting is live
-  r.render(model, { enabled: true, clusterSlotMode: 'panel_only', mapHostMode: 'fullview' }, 1090);
-  assert.ok(calls.sets.some((s) => s.ref === calls.effects[0].ref && s.opts.visible === false), 'bezelMask must default to OFF');
+  // 3. Explicit mapBezelMask: false in fullview wide mode hides bezelMask
+  r.render(model, { enabled: true, clusterSlotMode: 'panel_only', mapHostMode: 'fullview', mapBezelMask: false }, 1090);
+  assert.ok(calls.sets.some((s) => s.ref === calls.effects[0].ref && s.opts.visible === false), 'explicit mapBezelMask=false must hide bezelMask');
 
+  // 4. Native / legacy center / legacy off modes ALL unhost to slot 0x100 (behind dials, zero occlusion)
+  const hostsBeforeNative = calls.hosts.length;
   r.render(model, { enabled: true, clusterSlotMode: 'panel_only', mapHostMode: 'center', mapBezelMask: true }, 1100);
-  assert.deepStrictEqual(calls.hosts[calls.hosts.length - 1].opts, { target: 'map', x: 416, y: 120, w: 1088, h: 480, shown: 1 });
-
+  r.render(model, { enabled: true, clusterSlotMode: 'panel_only', mapHostMode: 'native', mapBezelMask: true }, 1150);
   r.render(model, { enabled: true, clusterSlotMode: 'panel_only', mapHostMode: 'off' }, 1200);
-  assert.deepStrictEqual(calls.unhosts, ['map'], 'unhost must follow real ClusterRender.unhost(target) 1-arg signature');
+  assert.strictEqual(calls.hosts.length, hostsBeforeNative, 'center/native/off must never host onto panel 0x203');
+  assert.ok(calls.unhosts.length >= 1 && calls.unhosts.every((t) => t === 'map'), 'unhost must follow real ClusterRender.unhost(target) 1-arg signature');
 
   // 4. Metric unit inference when car reports Celsius temperature without explicit distance enum
   const partialMetric = decodeCarUnits({ unitOfMeasurementTemperature: 1 });
