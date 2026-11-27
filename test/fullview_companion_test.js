@@ -190,7 +190,12 @@ function testFullviewUpstreamPatcherAndExtraCatalog() {
   fs.writeFileSync(path.join(wocDir, 'waze-on-cluster.conf'), 'tex_size = 1088x480\nhosted_vpp_scale = 0\n', 'utf8');
   fs.writeFileSync(
     path.join(wocDir, 'patch', 'patchd.js'),
-    "function planArgs(panel, mode, unproven) {\n    var args = ['--panel', panel, '--coding', CODING].concat(unproven ? ['--unproven'] : []);\n    return args;\n}\n",
+    "function planArgs(panel, mode, unproven) {\n    var args = ['--panel', panel, '--coding', CODING].concat(unproven ? ['--unproven'] : []);\n    return args;\n}\nvar keep = rec && rec.enabled === true && Array.isArray(rec.args) && rec.args.length ? rec.args : null;\n",
+    'utf8'
+  );
+  fs.writeFileSync(
+    path.join(wocDir, 'patch', 'carplay_locate.js'),
+    "var ALT_URL = 'maps:/car/instrumentcluster';\nvar SHOWUI_URL = ALT_URL + '?showETA=yes';\n",
     'utf8'
   );
   fs.writeFileSync(path.join(wocDir, 'component.json'), JSON.stringify({ id: 'waze-on-cluster', kind: 'tool', version: '0.14.15', requires: { 'cluster-render': '0.5.3' } }), 'utf8');
@@ -212,12 +217,14 @@ function testFullviewUpstreamPatcherAndExtraCatalog() {
   assert.strictEqual(JSON.parse(fs.readFileSync(path.join(wocAppDir, 'package', 'package.json'), 'utf8')).version, '0.6.17');
   assert.strictEqual(JSON.parse(fs.readFileSync(path.join(wocAppDir, 'mgu-app.json'), 'utf8')).version, '0.6.17');
   assert.ok(fs.readFileSync(path.join(wocAppDir, 'src', 'waze_cluster_control.js'), 'utf8').includes("ps.res !== '1632x720'"));
-  assert.ok(fs.readFileSync(path.join(wocAppDir, 'src', 'waze_cluster_control.js'), 'utf8').includes("ps.safe !== '690x490+380+110'"));
+  assert.ok(fs.readFileSync(path.join(wocAppDir, 'src', 'waze_cluster_control.js'), 'utf8').includes("ps.safe !== '840x570+396+40'"));
+  assert.ok(fs.readFileSync(path.join(wocDir, 'patch', 'patchd.js'), 'utf8').includes("840x570+396+40"));
   assert.ok(fs.readFileSync(path.join(crDir, 'kit', 'map_geometry.h'), 'utf8').includes('kMaxMapTexWidth = 1632'));
   assert.ok(fs.readFileSync(path.join(crDir, 'kit', 'map_geometry.cpp'), 'utf8').includes('tex_h > kMaxMapTexHeight'));
   assert.ok(/^\s*tex_size\s*=\s*1632x720\s*$/m.test(fs.readFileSync(path.join(wocDir, 'waze-on-cluster.conf'), 'utf8')));
   assert.ok(/^\s*hosted_vpp_scale\s*=\s*0\s*$/m.test(fs.readFileSync(path.join(wocDir, 'waze-on-cluster.conf'), 'utf8')));
   assert.ok(fs.readFileSync(path.join(wocDir, 'patch', 'patchd.js'), 'utf8').includes('cockpitFullviewResArgs'));
+  assert.ok(fs.readFileSync(path.join(wocDir, 'patch', 'carplay_locate.js'), 'utf8').includes("ALT_URL + '/map'"));
 
   const mguRoot = path.join(tmp, 'mgu-store');
   fs.mkdirSync(path.join(mguRoot, 'native', 'mgu-render'), { recursive: true });
