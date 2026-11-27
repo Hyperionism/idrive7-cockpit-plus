@@ -504,14 +504,17 @@ mgu.run({
                 ? 'host=no-host-layers'
                 : (sum.hostingState
                     ? ('host=' + sum.hostingState + (sum.hostingReason ? '(' + sum.hostingReason + ')' : ''))
-                    : ('host=' + (sum.hostModeActive || 'off')));
+                    : ('host=' + (sum.hostModeActive || 'native')));
+            const maskTag = (sum.crHostLayers && sum.hostModeActive && sum.hostModeActive !== 'native')
+                ? (' mask=' + (sum.bezelMaskMode || 'off') + (sum.crRenderState ? '' : '(rs=0)'))
+                : '';
             const wocTag = sum.wazeStatus
                 ? ('woc=' + (sum.wazeStatus.state || '?') + '@' + (sum.wazeStatus.target || '?') + (sum.wazeStatus.error ? '(' + sum.wazeStatus.error + ')' : ''))
                 : 'woc=absent';
             setTwoRow(
                 'DIAG_RENDER',
                 'Cluster & HUD Renderer (' + connState + ' - Font: ' + fontTag + ')',
-                clusterModeNote + ' | ' + hostTag + (sum.mapHostedInto ? '->' + sum.mapHostedInto : '') + ' | ' + wocTag + ' | ' + hudNote + ' | Layers: ' + renderer.layerCount() + '/64 (' +
+                clusterModeNote + ' | ' + hostTag + (sum.mapHostedInto ? '->' + sum.mapHostedInto : '') + maskTag + ' | ' + wocTag + ' | ' + hudNote + ' | Layers: ' + renderer.layerCount() + '/64 (' +
                     (renderer.pixelBytesTotal() / 1048576).toFixed(2) + ' MiB)' + refusedNote
             );
 

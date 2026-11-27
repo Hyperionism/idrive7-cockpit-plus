@@ -149,23 +149,33 @@ const BEZEL_MASK_FS = [
     'precision mediump float;',
     'varying vec2 v_uv;',
     'uniform float u_feather;',
+    'uniform float u_mode;',
     'void main() {',
-    '    float x = v_uv.x * 1632.0;',
-    '    float y = v_uv.y * 608.0;',
-    '    if (y >= 606.0) {',
-    '        gl_FragColor = vec4(0.0, 0.0, 0.0, 0.0);',
-    '        return;',
+    '    float wx = 144.0 + v_uv.x * 1632.0;',
+    '    float wy = v_uv.y * 616.0;',
+    '    float ax = abs(wx - 960.0);',
+    '    float fPx = clamp(u_feather > 1.0 ? u_feather : 54.0, 16.0, 120.0);',
+    '    float botErase = smoothstep(616.0 - max(36.0, fPx * 0.8), 614.0, wy);',
+    '    float eraseA = 0.0;',
+    '    if (u_mode > 0.5) {',
+    '        float halfW = 228.0;',
+    '        if (wy >= 95.0 && wy < 345.0) {',
+    '            halfW = mix(228.0, 355.0, smoothstep(0.0, 1.0, (wy - 95.0) / 250.0));',
+    '        } else if (wy >= 345.0) {',
+    '            halfW = mix(355.0, 245.0, smoothstep(0.0, 1.0, clamp((wy - 345.0) / 263.0, 0.0, 1.0)));',
+    '        }',
+    '        float sideErase = smoothstep(halfW - fPx, halfW, ax);',
+    '        float topErase = 1.0 - smoothstep(0.0, 14.0, wy);',
+    '        eraseA = max(max(sideErase, botErase), topErase);',
+    '    } else {',
+    '        float nx = ax / 800.0;',
+    '        float ny = (wy - 308.0) / 308.0;',
+    '        float dOuter = pow(pow(max(nx, 0.0001), 3.2) + pow(max(abs(ny), 0.0001), 3.2), 1.0 / 3.2);',
+    '        float fNorm = clamp(fPx / 800.0, 0.03, 0.14);',
+    '        float outerErase = smoothstep(1.0 - fNorm, 1.0, dOuter);',
+    '        eraseA = max(outerErase, botErase);',
     '    }',
-    '    float dx = (x - 816.0) / 816.0;',
-    '    float ry = y < 374.0 ? 354.0 : 408.0;',
-    '    float dy = (y - 374.0) / ry;',
-    '    float e = length(vec2(dx, dy));',
-    '    float fPx = u_feather > 1.0 ? u_feather : 54.0;',
-    '    float f = clamp(fPx / 816.0, 0.02, 0.14);',
-    '    float arcA = smoothstep(1.0 - f, 1.0, e);',
-    '    float safeBottom = 1.0 - smoothstep(560.0, 606.0, y);',
-    '    float a = clamp(arcA * safeBottom, 0.0, 1.0);',
-    '    gl_FragColor = vec4(0.0, 0.0, 0.0, a);',
+    '    gl_FragColor = vec4(0.0, 0.0, 0.0, clamp(eraseA, 0.0, 1.0));',
     '}',
 ].join('\n');
 
@@ -623,19 +633,22 @@ class OverlayRenderer {
         this._alertDismissed = false;
         this._iceChgState = {};
         this.hostConfigKey = '';
-        this.hostModeActive = 'off';
+        this.hostModeActive = 'native';
         this.crHostLayers = false;
+        this.crRenderState = false;
         this.hostingState = '';
         this.hostingReason = '';
         this.mapHostedInto = '';
         this.wazeStatus = null;
         this.bezelMaskRef = null;
         this.bezelMaskVisible = false;
+        this.bezelMaskMode = 'off';
         this.lastSummary = {};
     }
 
     isMapHostedLive() {
-        return this.hostModeActive === 'fullview' && (this.hostingState === 'live' || this.mapHostedInto === 'panel');
+        return (this.hostModeActive === 'fullview_dials' || this.hostModeActive === 'fullview') &&
+            (this.hostingState === 'live' || this.mapHostedInto === 'panel');
     }
 
     _parseMapTargetSize() {
@@ -669,23 +682,31 @@ class OverlayRenderer {
     }
 
     _syncMapHost(mode, maskOn, featherMode) {
-        const cleanMode = (mode === 'fullview' || mode === 'center') ? mode : 'off';
-        this.hostModeActive = cleanMode;
+        const cleanMode = mode === 'fullview_dials'
+            ? 'fullview_dials'
+            : (mode === 'fullview' ? 'fullview' : 'native');
+        // Never cover native KOMBI4 dials in fullview_dials without DstOut alpha cutout support.
+        const effectiveMode = (cleanMode === 'fullview_dials' && this.ready && !this.crRenderState)
+            ? 'native'
+            : cleanMode;
+        this.hostModeActive = effectiveMode;
+
+        const wantsHost = effectiveMode === 'fullview_dials' || effectiveMode === 'fullview';
         const hostLive = this.isMapHostedLive();
-        const showMask = cleanMode === 'fullview' && Boolean(maskOn) && hostLive;
+        const wantMask = effectiveMode === 'fullview_dials' || (effectiveMode === 'fullview' && Boolean(maskOn));
+        const showMask = wantsHost && wantMask && hostLive && this.crRenderState;
         const featherPx = featherMode === 'tight' ? 36 : (featherMode === 'wide' ? 80 : 54);
+        this.bezelMaskMode = showMask ? (effectiveMode === 'fullview_dials' ? 'dials' : 'bezel') : 'off';
         if (!this.cr) return;
 
-        const key = cleanMode + '|' + (showMask ? '1' : '0') + '|' + featherPx + '|' + (hostLive ? '1' : '0');
+        const key = effectiveMode + '|' + (showMask ? '1' : '0') + '|' + featherPx + '|' +
+            (hostLive ? '1' : '0') + '|' + (this.crRenderState ? '1' : '0');
         if (key === this.hostConfigKey) return;
         this.hostConfigKey = key;
 
-        if (cleanMode === 'fullview' || cleanMode === 'center') {
+        if (wantsHost) {
             if (typeof this.cr.host === 'function') {
-                const rect = cleanMode === 'fullview'
-                    ? this._fullviewHostRect()
-                    : { target: 'map', x: 416, y: 120, w: 1088, h: 480, shown: 1 };
-                this.cr.host('panel', rect);
+                this.cr.host('panel', this._fullviewHostRect());
             }
             if (showMask && typeof this.cr.effect === 'function') {
                 if (!this.bezelMaskRef) {
@@ -696,9 +717,17 @@ class OverlayRenderer {
                         x: 144,
                         y: 0,
                         w: 1632,
-                        h: 608,
+                        h: 616,
                         visible: true,
                         fs: BEZEL_MASK_FS,
+                        blend: 'alpha',
+                        blend_src: 'zero',
+                        blend_dst: 'one_minus_src_alpha',
+                        blend_src_alpha: 'zero',
+                        blend_dst_alpha: 'one_minus_src_alpha',
+                        blend_op: 'add',
+                        blend_op_alpha: 'add',
+                        color_mask: 'rgba',
                     });
                     this.bezelMaskVisible = true;
                 } else if (!this.bezelMaskVisible && typeof this.cr.set === 'function') {
@@ -707,6 +736,7 @@ class OverlayRenderer {
                 }
                 if (this.bezelMaskRef && typeof this.cr.uniform === 'function') {
                     this.cr.uniform(this.bezelMaskRef, 'u_feather', [featherPx]);
+                    this.cr.uniform(this.bezelMaskRef, 'u_mode', [effectiveMode === 'fullview_dials' ? 1 : 0]);
                 }
             } else if (this.bezelMaskRef && this.bezelMaskVisible && typeof this.cr.set === 'function') {
                 this.cr.set(this.bezelMaskRef, { visible: false });
@@ -838,12 +868,13 @@ class OverlayRenderer {
             this.connected = true;
             this.targets = cr.targets || '';
             this.crHostLayers = Boolean(cr.hostLayers);
+            this.crRenderState = Boolean(cr.renderState);
             this.hostConfigKey = '';
             const keys = Object.keys(this.layers);
             for (let i = 0; i < keys.length; i++) {
                 this.layers[keys[i]].prevBuf = null;
             }
-            this.log.info('cluster-render ready (panelSlot=' + this.slotStatus.panelSlot + ', canPanel=' + this.canUsePanel() + ', hostLayers=' + this.crHostLayers + ')');
+            this.log.info('cluster-render ready (panelSlot=' + this.slotStatus.panelSlot + ', canPanel=' + this.canUsePanel() + ', hostLayers=' + this.crHostLayers + ', renderState=' + this.crRenderState + ')');
         });
         cr.on('hosting', (target, ev) => {
             if (target !== 'map') return;
@@ -859,9 +890,12 @@ class OverlayRenderer {
         cr.on('disconnected', () => {
             this.ready = false;
             this.connected = false;
+            this.crHostLayers = false;
+            this.crRenderState = false;
             this.hostingState = '';
             this.hostingReason = '';
             this.mapHostedInto = '';
+            this.bezelMaskMode = 'off';
         });
         cr.on('refused', (op, ref, reason) => {
             const msg = op + ' ref=' + ref + ': ' + reason;
@@ -907,8 +941,8 @@ class OverlayRenderer {
                 showMapOverlay = !canPanel && s.fallbackMapBar !== false && wazeOn;
             }
         }
-        const wantHostMode = panelAllowed ? (s.mapHostMode || 'fullview') : 'off';
-        const wantBezelMask = s.mapBezelMask === true;
+        const wantHostMode = panelAllowed ? (s.mapHostMode || 'fullview_dials') : 'native';
+        const wantBezelMask = s.mapBezelMask !== false;
         this._syncMapHost(wantHostMode, wantBezelMask, s.mapBezelFeather || 'standard');
 
         // HUD navigation re-rendering & intersection mini-map auto-yield:
@@ -1182,6 +1216,8 @@ class OverlayRenderer {
             showClusterSpeed, showClusterLaneBar, showClusterTurnCard, showClusterEtaPill, turnDistMeters,
             hostModeActive: this.hostModeActive,
             crHostLayers: this.crHostLayers,
+            crRenderState: this.crRenderState,
+            bezelMaskMode: this.bezelMaskMode,
             hostingState: this.hostingState,
             hostingReason: this.hostingReason,
             mapHostedInto: this.mapHostedInto,
@@ -2636,14 +2672,16 @@ class OverlayRenderer {
         this.connected = false;
         this.ready = false;
         this.hostConfigKey = '';
-        this.hostModeActive = 'off';
+        this.hostModeActive = 'native';
         this.crHostLayers = false;
+        this.crRenderState = false;
         this.hostingState = '';
         this.hostingReason = '';
         this.mapHostedInto = '';
         this.wazeStatus = null;
         this.bezelMaskRef = null;
         this.bezelMaskVisible = false;
+        this.bezelMaskMode = 'off';
         this.lastHudNavKey = '';
         this.lastHudRoadKey = '';
         this.lastRightWidgetKey = '';

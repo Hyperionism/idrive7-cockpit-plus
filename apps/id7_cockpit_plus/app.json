@@ -2,7 +2,7 @@
   "id": "id7_cockpit_plus",
   "title": "Cockpit+",
   "description": "Cockpit+ for BMW iDrive 7 (KOMBI4 + HUD): calibrated Cluster+ wing widgets, per-line left speed telemetry, 5AU top-center CarPlay/Baidu lane guidance, centered iOS turn card & ETA pill over hosted FullView 1632x720 map, and bold HUD navigation",
-  "version": "0.9.6",
+  "version": "0.9.7",
   "autostart": true,
   "license": "GPL-3.0-only",
   "vendor": "idrive7-cockpit-plus",
@@ -1178,28 +1178,29 @@
       "key": "mapHostMode",
       "label": "Full-screen CarPlay map host",
       "type": "choice",
-      "default": "fullview",
+      "default": "fullview_dials",
+      "reset": 2,
       "options": [
         [
+          "fullview_dials",
+          "FullView + Native Dials (alpha cutout, default)"
+        ],
+        [
           "fullview",
-          "FullView 1632x720 (default)"
+          "FullView Wide 1632px (covers dials)"
         ],
         [
-          "center",
-          "Center 1088x480"
-        ],
-        [
-          "off",
-          "Off (Native Map Slot)"
+          "native",
+          "Native Center 1088x480 (behind dials, zero occlusion)"
         ]
       ]
     },
     {
       "key": "mapBezelMask",
-      "label": "KOMBI4 bezel corner fade",
+      "label": "Transparent curved bezel cutout (Wide mode)",
       "type": "bool",
-      "default": false,
-      "reset": 2
+      "default": true,
+      "reset": 3
     },
     {
       "key": "mapBezelFeather",
