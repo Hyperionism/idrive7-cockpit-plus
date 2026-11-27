@@ -288,6 +288,7 @@ mgu.run({
         let mainVisible = true;
         let clusterVisible = false;
         let alertsVisible = false;
+        let layoutPosVisible = false;
         let diagVisible = false;
         let lastProbeActive = false;
         let lastMainUpdate = 0;
@@ -310,15 +311,12 @@ mgu.run({
             if (!force && lastPanelModeVis === isPanel) return;
             lastPanelModeVis = isPanel;
             const panelOnlyComps = [
+                'BTN_COCKPIT_NAV',
+                'BTN_LAYOUT_POS',
                 'SET_WIDGETMEDIA',
                 'SET_WIDGETTRIP',
                 'SET_WIDGETTPMS',
                 'WIDGET_CHARGING',
-                'SET_CLUSTERLANEBAR',
-                'SET_CLUSTERTURNCARD',
-                'SET_CLUSTERETAPILL',
-                'SET_CLUSTERSPEEDOVERLAY',
-                'BTN_COCKPIT_NAV',
                 'SET_CABINTEMPDISPLAY',
                 'SET_HVSOCGAUGE',
             ];
@@ -333,6 +331,54 @@ mgu.run({
             lastChargingActive = active;
             ui.enabled('WIDGET_CHARGING', false);
             ui.checked('WIDGET_CHARGING', active);
+        }
+
+        const POS_TARGETS = {
+            turn_card:     { label: 'Center iOS turn card',   xKey: 'turnCardNudgeX',     yKey: 'turnCardNudgeY',     minX: -520, maxX: 520, minY: -110, maxY: 440 },
+            lane_bar:      { label: '5AU top lane bar',       xKey: 'laneBarNudgeX',      yKey: 'laneBarNudgeY',      minX: -520, maxX: 520, minY: -20,  maxY: 500 },
+            eta_pill:      { label: 'Bottom ETA capsule',     xKey: 'etaPillNudgeX',      yKey: 'etaPillNudgeY',      minX: -520, maxX: 520, minY: -580, maxY: 40  },
+            speed_overlay: { label: 'Digital speed overlay',  xKey: 'speedOverlayNudgeX', yKey: 'speedOverlayNudgeY', minX: -300, maxX: 960, minY: -300, maxY: 220 },
+            cluster_all:   { label: 'Cluster outer readouts', xKey: 'clusterNudgeX',      yKey: 'clusterNudgeY',      minX: -12,  maxX: 12,  minY: -12,  maxY: 12  },
+            hud_all:       { label: 'HUD telemetry & nav',    xKey: 'hudNudgeX',          yKey: 'hudNudgeY',          minX: -40,  maxX: 40,  minY: -40,  maxY: 40  },
+        };
+
+        function currentPosTarget() {
+            const k = String(settings.get('posTarget') || 'turn_card');
+            return POS_TARGETS[k] || POS_TARGETS.turn_card;
+        }
+
+        function currentPosStep() {
+            const n = Number(settings.get('posStep'));
+            return (n === 2 || n === 10 || n === 30) ? n : 10;
+        }
+
+        function syncLayoutPosStatus() {
+            const cfg = currentPosTarget();
+            const step = currentPosStep();
+            const vx = Math.round(Number(settings.get(cfg.xKey)) || 0);
+            const vy = Math.round(Number(settings.get(cfg.yKey)) || 0);
+            const fmtSigned = (n) => (n > 0 ? ('+' + n) : String(n));
+            setTwoRow(
+                'POS_STATUS',
+                tr(cfg.label) + '  |  X ' + fmtSigned(vx) + ' px, Y ' + fmtSigned(vy) + ' px',
+                tr('Step') + ': ' + step + ' px  |  X [' + cfg.minX + '..+' + cfg.maxX + '], Y [' + cfg.minY + '..+' + cfg.maxY + ']'
+            );
+        }
+
+        function nudgeSelectedPos(dx, dy) {
+            const cfg = currentPosTarget();
+            const step = currentPosStep();
+            if (dx) {
+                const curX = Math.round(Number(settings.get(cfg.xKey)) || 0);
+                const nextX = Math.max(cfg.minX, Math.min(cfg.maxX, curX + dx * step));
+                settings.set(cfg.xKey, nextX);
+            }
+            if (dy) {
+                const curY = Math.round(Number(settings.get(cfg.yKey)) || 0);
+                const nextY = Math.max(cfg.minY, Math.min(cfg.maxY, curY + dy * step));
+                settings.set(cfg.yKey, nextY);
+            }
+            syncLayoutPosStatus();
         }
 
         function syncAlertPreviewStatus(model) {
@@ -658,6 +704,7 @@ mgu.run({
             syncChargingWidgetCheckbox(model, clusterVisible || forceUi);
             syncClusterModeVisibility(clusterVisible || forceUi);
             if (alertsVisible || forceUi) syncAlertPreviewStatus(model);
+            if (layoutPosVisible || forceUi) syncLayoutPosStatus();
 
             if ((mainVisible || forceUi) && (forceUi || now - lastMainUpdate >= 1000)) {
                 lastMainUpdate = now;
@@ -671,6 +718,10 @@ mgu.run({
 
         ui.onClick('TAB_GENERAL', () => {
             ui.open('GENERAL');
+        });
+
+        ui.onClick('BTN_UNITS_MENU', () => {
+            ui.open('UNITS');
         });
 
         ui.onClick('BTN_ALERTS_MENU', () => {
@@ -705,6 +756,45 @@ mgu.run({
 
         ui.onClick('BTN_COCKPIT_NAV', () => {
             ui.open('COCKPIT_NAV');
+        });
+
+        function openLayoutPos(targetKey) {
+            if (targetKey && POS_TARGETS[targetKey] && settings.get('posTarget') !== targetKey) {
+                settings.set('posTarget', targetKey);
+            }
+            layoutPosVisible = true;
+            syncLayoutPosStatus();
+            ui.open('LAYOUT_POS');
+        }
+
+        ui.onClick('BTN_LAYOUT_POS', () => {
+            openLayoutPos(null);
+        });
+
+        ui.onClick('BTN_NAV_TO_POS', () => {
+            openLayoutPos(null);
+        });
+
+        ui.onClick('BTN_HUD_TO_POS', () => {
+            openLayoutPos('hud_all');
+        });
+
+        ui.onClick('BTN_POS_LEFT', () => { nudgeSelectedPos(-1, 0); });
+        ui.onClick('BTN_POS_RIGHT', () => { nudgeSelectedPos(1, 0); });
+        ui.onClick('BTN_POS_UP', () => { nudgeSelectedPos(0, -1); });
+        ui.onClick('BTN_POS_DOWN', () => { nudgeSelectedPos(0, 1); });
+        ui.onClick('BTN_POS_RESET_ONE', () => {
+            const cfg = currentPosTarget();
+            settings.set(cfg.xKey, 0);
+            settings.set(cfg.yKey, 0);
+            syncLayoutPosStatus();
+        });
+        ui.onClick('BTN_POS_RESET_ALL', () => {
+            Object.keys(POS_TARGETS).forEach((k) => {
+                settings.set(POS_TARGETS[k].xKey, 0);
+                settings.set(POS_TARGETS[k].yKey, 0);
+            });
+            syncLayoutPosStatus();
         });
 
         ui.onClick('TAB_HUD', () => {
@@ -756,6 +846,9 @@ mgu.run({
             } else if (name === 'ALERTS') {
                 alertsVisible = shown;
                 if (shown) syncAlertPreviewStatus(computeModel(Date.now()));
+            } else if (name === 'LAYOUT_POS') {
+                layoutPosVisible = shown;
+                if (shown) syncLayoutPosStatus();
             } else if (name === 'DIAG') {
                 diagVisible = shown;
                 runtime.diagVisible = shown;

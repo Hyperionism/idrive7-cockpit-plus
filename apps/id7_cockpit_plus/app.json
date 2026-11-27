@@ -282,20 +282,33 @@
       "settings": [
         "enabled",
         "displayTarget",
+        "vehicle",
+        "unitSystem",
+        [
+          "button",
+          "BTN_UNITS_MENU",
+          "Fine-tune units & oil threshold..."
+        ],
         "smartAlerts",
         [
           "button",
           "BTN_ALERTS_MENU",
           "Preview smart alerts..."
         ],
-        "unitSystem",
-        "tempUnit",
-        "evEffUnit",
-        "fuelEffUnit",
-        "pressUnit",
-        "coldOilC",
-        "vehicle",
         "demo"
+      ]
+    },
+    {
+      "name": "UNITS",
+      "kind": "menu",
+      "title": "Units & Thresholds",
+      "repoLink": false,
+      "settings": [
+        "tempUnit",
+        "fuelEffUnit",
+        "evEffUnit",
+        "pressUnit",
+        "coldOilC"
       ]
     },
     {
@@ -358,6 +371,16 @@
       "repoLink": false,
       "settings": [
         "clusterSlotMode",
+        [
+          "button",
+          "BTN_COCKPIT_NAV",
+          "FullView map, nav cards & speed..."
+        ],
+        [
+          "button",
+          "BTN_LAYOUT_POS",
+          "Adjust widget positions (free X/Y)..."
+        ],
         "widgetMedia",
         "widgetTrip",
         "widgetTpms",
@@ -366,26 +389,15 @@
           "WIDGET_CHARGING",
           "Right widget: Charging finish time (auto)"
         ],
-        "clusterLaneBar",
-        "clusterTurnCard",
-        "clusterEtaPill",
-        "clusterSpeedOverlay",
-        [
-          "button",
-          "BTN_COCKPIT_NAV",
-          "Nav & Speed Positions / Trigger..."
-        ],
         "belowSpeedLine1",
         "belowSpeedLine2",
         "gearDisplay",
         "cabinTempDisplay",
-        "hvSocGauge",
         "brakeIndicator",
-        "iceChargeBar",
-        "cornerRightDisplay",
         "cornerLeftDisplay",
-        "clusterNudgeX",
-        "clusterNudgeY"
+        "cornerRightDisplay",
+        "hvSocGauge",
+        "iceChargeBar"
       ]
     },
     {
@@ -406,14 +418,56 @@
         "etaPillPlate",
         "clusterSpeedOverlay",
         "speedPlate",
-        "laneBarNudgeX",
-        "laneBarNudgeY",
-        "turnCardNudgeX",
-        "turnCardNudgeY",
-        "etaPillNudgeX",
-        "etaPillNudgeY",
-        "speedOverlayNudgeX",
-        "speedOverlayNudgeY"
+        [
+          "button",
+          "BTN_NAV_TO_POS",
+          "Adjust widget positions (free X/Y)..."
+        ]
+      ]
+    },
+    {
+      "name": "LAYOUT_POS",
+      "kind": "menu",
+      "title": "Widget Position Studio",
+      "repoLink": false,
+      "settings": [
+        "posTarget",
+        "posStep",
+        [
+          "tworow",
+          "POS_STATUS",
+          "Selected Widget Position"
+        ],
+        [
+          "button",
+          "BTN_POS_LEFT",
+          "Move Left (-X)"
+        ],
+        [
+          "button",
+          "BTN_POS_RIGHT",
+          "Move Right (+X)"
+        ],
+        [
+          "button",
+          "BTN_POS_UP",
+          "Move Up (-Y)"
+        ],
+        [
+          "button",
+          "BTN_POS_DOWN",
+          "Move Down (+Y)"
+        ],
+        [
+          "button",
+          "BTN_POS_RESET_ONE",
+          "Reset Selected Widget (0, 0)"
+        ],
+        [
+          "button",
+          "BTN_POS_RESET_ALL",
+          "Reset All Widget Positions"
+        ]
       ]
     },
     {
@@ -427,8 +481,11 @@
         "hudLine1",
         "hudLine2",
         "hudLine3",
-        "hudNudgeX",
-        "hudNudgeY"
+        [
+          "button",
+          "BTN_HUD_TO_POS",
+          "Adjust HUD position (free X/Y)..."
+        ]
       ]
     },
     {
@@ -1412,6 +1469,58 @@
         15,
         30,
         60
+      ]
+    },
+    {
+      "key": "posTarget",
+      "label": "Widget to adjust",
+      "type": "choice",
+      "default": "turn_card",
+      "options": [
+        [
+          "turn_card",
+          "Center iOS turn card"
+        ],
+        [
+          "lane_bar",
+          "5AU top lane bar"
+        ],
+        [
+          "eta_pill",
+          "Bottom ETA capsule"
+        ],
+        [
+          "speed_overlay",
+          "Digital speed overlay"
+        ],
+        [
+          "cluster_all",
+          "Cluster outer readouts"
+        ],
+        [
+          "hud_all",
+          "HUD telemetry & nav"
+        ]
+      ]
+    },
+    {
+      "key": "posStep",
+      "label": "Move step size",
+      "type": "choice",
+      "default": "10",
+      "options": [
+        [
+          "2",
+          "Fine 2 px"
+        ],
+        [
+          "10",
+          "Standard 10 px (default)"
+        ],
+        [
+          "30",
+          "Fast 30 px"
+        ]
       ]
     },
     {

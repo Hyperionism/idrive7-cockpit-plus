@@ -1210,12 +1210,12 @@ class OverlayRenderer {
                 this._setVisible('below_speed', false);
             }
 
-            // 1a2. Frameless Digital Speed Overlay (372..592, 328..418 by default; adjustable & toggleable)
+            // 1a2. Frameless Digital Speed Overlay (372..592, 328..418 by default; wide free X/Y range)
             if (showClusterSpeed) {
-                const spNx = clamp(Number(s.speedOverlayNudgeX) || 0, -160, 160);
-                const spNy = clamp(Number(s.speedOverlayNudgeY) || 0, -120, 120);
+                const spNx = clamp(Number(s.speedOverlayNudgeX) || 0, -300, 960);
+                const spNy = clamp(Number(s.speedOverlayNudgeY) || 0, -300, 220);
                 const spRect = resolveWidgetRect(layoutState, 'speed', SPEED_BASE, cx + spNx, cy + spNy, {
-                    minX: 200, maxX: 700, minY: 180, maxY: 440,
+                    minX: 160, maxX: 1520, minY: 40, maxY: 540,
                 });
                 const lSpd = this._ensureOrLocal('speed', Object.assign({ target: 'panel', visible: true, z: 12 }, spRect));
                 const spdFmt = formatSpeed(t.speedKmh, units);
@@ -1231,12 +1231,12 @@ class OverlayRenderer {
                 this._setVisible('speed', false);
             }
 
-            // 1a3. 5AU Top-Center Lane Guidance Strip (760..1160, 20..98; clear of left ring <=722 and right redline >=1198)
+            // 1a3. 5AU Top-Center Lane Guidance Strip (760..1160, 20..98 by default; wide free X/Y range)
             if (showClusterLaneBar) {
-                const lnNx = clamp(Number(s.laneBarNudgeX) || 0, -240, 240);
-                const lnNy = clamp(Number(s.laneBarNudgeY) || 0, -16, 120);
+                const lnNx = clamp(Number(s.laneBarNudgeX) || 0, -520, 520);
+                const lnNy = clamp(Number(s.laneBarNudgeY) || 0, -20, 500);
                 const lnRect = resolveWidgetRect(layoutState, 'lane_guidance', LANE_GUIDANCE_BASE, cx + lnNx, cy + lnNy, {
-                    minX: 500, maxX: 1220 - LANE_GUIDANCE_BASE.w, minY: 0, maxY: 240,
+                    minX: 240, maxX: 1720 - LANE_GUIDANCE_BASE.w, minY: 0, maxY: 540,
                 });
                 const lLn = this._ensureOrLocal('lane_guidance', Object.assign({ target: 'panel', visible: true, z: 14 }, lnRect));
                 const lk = hudNavKey({ lanes: clusterLaneObj }) + '|' + laneBarPlate + '|' + lnRect.w + 'x' + lnRect.h;
@@ -1250,12 +1250,12 @@ class OverlayRenderer {
                 this._setVisible('lane_guidance', false);
             }
 
-            // 1a4. Centered iOS Turn Card (760..1160, 110..214; strictly left of right_widget x=1244 & triggers near turns)
+            // 1a4. Centered iOS Turn Card (760..1160, 110..214 by default; wide free X/Y range above GEAR_WIN)
             if (showClusterTurnCard) {
-                const tcNx = clamp(Number(s.turnCardNudgeX) || 0, -240, 240);
-                const tcNy = clamp(Number(s.turnCardNudgeY) || 0, -60, 240);
+                const tcNx = clamp(Number(s.turnCardNudgeX) || 0, -520, 520);
+                const tcNy = clamp(Number(s.turnCardNudgeY) || 0, -110, 440);
                 const tcRect = resolveWidgetRect(layoutState, 'guidance_turn_card', TURN_CARD_BASE, cx + tcNx, cy + tcNy, {
-                    minX: 500, maxX: 1244 - TURN_CARD_BASE.w, minY: 20, maxY: 500,
+                    minX: 240, maxX: 1720 - TURN_CARD_BASE.w, minY: 0, maxY: 520,
                 });
                 const lTc = this._ensureOrLocal('guidance_turn_card', Object.assign({ target: 'panel', visible: true, z: 15 }, tcRect));
                 const tk = hudNavKey(turnCardGuide) + '|' + turnCardPlate + '|' + tcRect.w + 'x' + tcRect.h;
@@ -1269,13 +1269,17 @@ class OverlayRenderer {
                 this._setVisible('guidance_turn_card', false);
             }
 
-            // 1a5. Bottom-Center iOS Arrival ETA Capsule (760..1160, 648..694; hidden cleanly when route inactive)
+            // 1a5. Bottom-Center iOS Arrival ETA Capsule (760..1160, 648..694 by default; wide free X/Y with GEAR_WIN guard)
             if (showClusterEtaPill) {
-                const epNx = clamp(Number(s.etaPillNudgeX) || 0, -240, 240);
-                const epNy = clamp(Number(s.etaPillNudgeY) || 0, -160, 60);
+                const epNx = clamp(Number(s.etaPillNudgeX) || 0, -520, 520);
+                const epNy = clamp(Number(s.etaPillNudgeY) || 0, -580, 40);
                 const epRect = resolveWidgetRect(layoutState, 'eta_pill', ETA_PILL_BASE, cx + epNx, cy + epNy, {
-                    minX: 500, maxX: 1244 - ETA_PILL_BASE.w, minY: 480, maxY: 716 - ETA_PILL_BASE.h,
+                    minX: 240, maxX: 1720 - ETA_PILL_BASE.w, minY: 60, maxY: 716 - ETA_PILL_BASE.h,
                 });
+                // Never allow ETA capsule to enter KOMBI4 GEAR_WIN (x=1380..1460, y=648..720)
+                if (epRect.y + epRect.h > 646 && epRect.x + epRect.w > 1378) {
+                    epRect.x = Math.max(240, 1378 - epRect.w);
+                }
                 const lEp = this._ensureOrLocal('eta_pill', Object.assign({ target: 'panel', visible: true, z: 14 }, epRect));
                 const remMinKey = typeof clusterEtaObj.remainSec === 'number' ? Math.round(clusterEtaObj.remainSec / 60) : -1;
                 const remKmKey = typeof clusterEtaObj.remainMeters === 'number' ? Math.round(clusterEtaObj.remainMeters / 100) : -1;
@@ -1671,8 +1675,42 @@ class OverlayRenderer {
 
     _paintGearNextToD(cv, digitStr) {
         cv.clear(COL.clear);
-        if (digitStr) {
-            drawTextOutline(cv, digitStr, 1, 46, 38, COL.white, { font: 'bold', align: 'left' });
+        if (!digitStr) return;
+        drawTextOutline(cv, digitStr, 0, 46, 38, COL.white, { font: 'bold', align: 'left' });
+        // Trim left glyph side-bearing so the first visible ink pixel sits flush at x=0
+        // (panel x=1461, literally 1px outside KOMBI4 GEAR_WIN 1380..1460) for tightest safe spacing to 'D'.
+        const d = cv.d;
+        const w = cv.w;
+        const h = cv.h;
+        let minX = w;
+        for (let y = 0; y < h; y++) {
+            const row = y * w * 4;
+            for (let x = 0; x < minX; x++) {
+                if (d[row + x * 4 + 3] > 0) {
+                    minX = x;
+                    break;
+                }
+            }
+        }
+        if (minX > 0 && minX < w) {
+            for (let y = 0; y < h; y++) {
+                const row = y * w * 4;
+                for (let x = 0; x < w; x++) {
+                    const dst = row + x * 4;
+                    if (x + minX < w) {
+                        const src = row + (x + minX) * 4;
+                        d[dst] = d[src];
+                        d[dst + 1] = d[src + 1];
+                        d[dst + 2] = d[src + 2];
+                        d[dst + 3] = d[src + 3];
+                    } else {
+                        d[dst] = 0;
+                        d[dst + 1] = 0;
+                        d[dst + 2] = 0;
+                        d[dst + 3] = 0;
+                    }
+                }
+            }
         }
     }
 
