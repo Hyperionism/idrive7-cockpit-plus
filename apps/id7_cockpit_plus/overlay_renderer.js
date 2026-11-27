@@ -151,16 +151,20 @@ const BEZEL_MASK_FS = [
     'uniform float u_feather;',
     'void main() {',
     '    float x = v_uv.x * 1632.0;',
-    '    float y = v_uv.y * 720.0;',
+    '    float y = v_uv.y * 608.0;',
+    '    if (y >= 606.0) {',
+    '        gl_FragColor = vec4(0.0, 0.0, 0.0, 0.0);',
+    '        return;',
+    '    }',
     '    float dx = (x - 816.0) / 816.0;',
     '    float ry = y < 374.0 ? 354.0 : 408.0;',
     '    float dy = (y - 374.0) / ry;',
     '    float e = length(vec2(dx, dy));',
-    '    float fPx = u_feather > 1.0 ? u_feather : 168.0;',
-    '    float f = clamp(fPx / 816.0, 0.04, 0.45);',
+    '    float fPx = u_feather > 1.0 ? u_feather : 54.0;',
+    '    float f = clamp(fPx / 816.0, 0.02, 0.14);',
     '    float arcA = smoothstep(1.0 - f, 1.0, e);',
-    '    float botFade = 1.0 - smoothstep(0.0, 20.0, 720.0 - y);',
-    '    float a = clamp(max(arcA, botFade), 0.0, 1.0);',
+    '    float safeBottom = 1.0 - smoothstep(560.0, 606.0, y);',
+    '    float a = clamp(arcA * safeBottom, 0.0, 1.0);',
     '    gl_FragColor = vec4(0.0, 0.0, 0.0, a);',
     '}',
 ].join('\n');
@@ -620,26 +624,66 @@ class OverlayRenderer {
         this._iceChgState = {};
         this.hostConfigKey = '';
         this.hostModeActive = 'off';
+        this.crHostLayers = false;
+        this.hostingState = '';
+        this.hostingReason = '';
+        this.mapHostedInto = '';
+        this.wazeStatus = null;
         this.bezelMaskRef = null;
         this.bezelMaskVisible = false;
         this.lastSummary = {};
     }
 
+    isMapHostedLive() {
+        return this.hostModeActive === 'fullview' && (this.hostingState === 'live' || this.mapHostedInto === 'panel');
+    }
+
+    _parseMapTargetSize() {
+        const m = /(?:^|,)\s*map\s*:\s*(\d+)x(\d+)/i.exec(String(this.targets || ''));
+        if (m) {
+            const w = parseInt(m[1], 10);
+            const h = parseInt(m[2], 10);
+            if (w >= 64 && h >= 32) return { w, h };
+        }
+        return { w: 1088, h: 480 };
+    }
+
+    _fullviewHostRect() {
+        // Keep hosted FullView map strictly within y=0..616 so it NEVER touches KOMBI4's
+        // bottom status bar or GEAR_WIN (1380..1460, 648..720) which latches safety BLACK_BOX.
+        const ms = this._parseMapTargetSize();
+        const dstH = 616;
+        const srcH = Math.max(32, Math.min(ms.h, Math.floor((ms.h * dstH) / 720) & ~1));
+        return {
+            target: 'map',
+            x: 144,
+            y: 0,
+            w: 1632,
+            h: dstH,
+            src_x: 0,
+            src_y: 0,
+            src_w: ms.w,
+            src_h: srcH,
+            shown: 1,
+        };
+    }
+
     _syncMapHost(mode, maskOn, featherMode) {
         const cleanMode = (mode === 'fullview' || mode === 'center') ? mode : 'off';
-        const showMask = cleanMode === 'fullview' && Boolean(maskOn);
-        const featherPx = featherMode === 'tight' ? 110 : (featherMode === 'wide' ? 230 : 168);
         this.hostModeActive = cleanMode;
+        const hostLive = this.isMapHostedLive();
+        const showMask = cleanMode === 'fullview' && Boolean(maskOn) && hostLive;
+        const featherPx = featherMode === 'tight' ? 36 : (featherMode === 'wide' ? 80 : 54);
         if (!this.cr) return;
 
-        const key = cleanMode + '|' + (showMask ? '1' : '0') + '|' + featherPx;
+        const key = cleanMode + '|' + (showMask ? '1' : '0') + '|' + featherPx + '|' + (hostLive ? '1' : '0');
         if (key === this.hostConfigKey) return;
         this.hostConfigKey = key;
 
         if (cleanMode === 'fullview' || cleanMode === 'center') {
             if (typeof this.cr.host === 'function') {
                 const rect = cleanMode === 'fullview'
-                    ? { target: 'map', x: 144, y: 0, w: 1632, h: 720, shown: 1 }
+                    ? this._fullviewHostRect()
                     : { target: 'map', x: 416, y: 120, w: 1088, h: 480, shown: 1 };
                 this.cr.host('panel', rect);
             }
@@ -652,7 +696,7 @@ class OverlayRenderer {
                         x: 144,
                         y: 0,
                         w: 1632,
-                        h: 720,
+                        h: 608,
                         visible: true,
                         fs: BEZEL_MASK_FS,
                     });
@@ -702,8 +746,14 @@ class OverlayRenderer {
         this.lastWazeCheck = nowMs;
         try {
             const st = JSON.parse(fs.readFileSync(this.wazeStatusPath, 'utf8'));
-            this.wazeShowing = Boolean(st && st.state === 'showing' && st.target === 'map');
+            this.wazeStatus = st && typeof st === 'object' ? {
+                state: String(st.state || ''),
+                target: String(st.target || ''),
+                error: st.error ? String(st.error) : '',
+            } : null;
+            this.wazeShowing = Boolean(st && st.state === 'showing' && (st.target === 'map' || st.target === 'panel'));
         } catch (e) {
+            this.wazeStatus = null;
             this.wazeShowing = false;
         }
         return this.wazeShowing;
@@ -787,16 +837,31 @@ class OverlayRenderer {
             this.ready = true;
             this.connected = true;
             this.targets = cr.targets || '';
+            this.crHostLayers = Boolean(cr.hostLayers);
             this.hostConfigKey = '';
             const keys = Object.keys(this.layers);
             for (let i = 0; i < keys.length; i++) {
                 this.layers[keys[i]].prevBuf = null;
             }
-            this.log.info('cluster-render ready (panelSlot=' + this.slotStatus.panelSlot + ', canPanel=' + this.canUsePanel() + ')');
+            this.log.info('cluster-render ready (panelSlot=' + this.slotStatus.panelSlot + ', canPanel=' + this.canUsePanel() + ', hostLayers=' + this.crHostLayers + ')');
+        });
+        cr.on('hosting', (target, ev) => {
+            if (target !== 'map') return;
+            this.hostingState = (ev && ev.state) ? String(ev.state) : '';
+            this.hostingReason = (ev && ev.reason) ? String(ev.reason) : '';
+            this.hostConfigKey = '';
+        });
+        cr.on('host', (target, ev) => {
+            if (target !== 'map') return;
+            this.mapHostedInto = (ev && ev.into) ? String(ev.into) : '';
+            this.hostConfigKey = '';
         });
         cr.on('disconnected', () => {
             this.ready = false;
             this.connected = false;
+            this.hostingState = '';
+            this.hostingReason = '';
+            this.mapHostedInto = '';
         });
         cr.on('refused', (op, ref, reason) => {
             const msg = op + ' ref=' + ref + ': ' + reason;
@@ -843,7 +908,7 @@ class OverlayRenderer {
             }
         }
         const wantHostMode = panelAllowed ? (s.mapHostMode || 'fullview') : 'off';
-        const wantBezelMask = s.mapBezelMask !== false;
+        const wantBezelMask = s.mapBezelMask === true;
         this._syncMapHost(wantHostMode, wantBezelMask, s.mapBezelFeather || 'standard');
 
         // HUD navigation re-rendering & intersection mini-map auto-yield:
@@ -1060,7 +1125,35 @@ class OverlayRenderer {
         const turnTriggerM = turnAlwaysOn ? 999999 : clamp(Number(trigRaw) || 350, 50, 5000);
         const turnHoldMs = Math.round(clamp(Number(turnCardCfg.dismissDelaySeconds) || 2.5, 0, 15) * 1000);
         const turnDistMeters = (hn && typeof hn.turnDistMeters === 'number' && isFinite(hn.turnDistMeters)) ? hn.turnDistMeters : null;
-        const activeGuide = (routeOn && hn && hn.guide) ? hn.guide : null;
+        // NavTracker.snapshot() stores the maneuver object in `hn.show` (`hn.guide` is the provider string like 'CAR_PLAY').
+        const rawGuideObj = (routeOn && hn && hn.show && typeof hn.show === 'object') ? hn.show : null;
+        let activeGuide = rawGuideObj;
+        if (rawGuideObj && turnDistMeters !== null && turnDistMeters >= 0) {
+            const existingM = metres(rawGuideObj);
+            if (!rawGuideObj.dist || (existingM !== null && Math.abs(existingM - turnDistMeters) >= 20 && turnDistMeters < 1000)) {
+                let dTxt;
+                let uTxt;
+                if (units && units.distUnit === 'mi') {
+                    const ft = Math.round(turnDistMeters * 3.28084);
+                    if (ft >= 528) {
+                        const mi = turnDistMeters / 1609.344;
+                        dTxt = mi >= 10 ? mi.toFixed(0) : mi.toFixed(1);
+                        uTxt = 'mi';
+                    } else {
+                        dTxt = String(Math.max(10, Math.round(ft / 10) * 10));
+                        uTxt = 'ft';
+                    }
+                } else if (turnDistMeters >= 1000) {
+                    const km = turnDistMeters / 1000;
+                    dTxt = km >= 10 ? km.toFixed(0) : km.toFixed(1);
+                    uTxt = 'km';
+                } else {
+                    dTxt = String(Math.max(10, Math.round(turnDistMeters / 10) * 10));
+                    uTxt = 'm';
+                }
+                activeGuide = Object.assign({}, rawGuideObj, { dist: dTxt, unit: uTxt });
+            }
+        }
         let turnCardGuide = null;
         if (!routeOn || !clusterTurnCardEnabled || !panelAllowed) {
             this._turnCardHold = null;
@@ -1087,6 +1180,12 @@ class OverlayRenderer {
             panelAllowed, showHud, showOwnHudNav, showHudRoad, showHudHeadway, hudHeadwayMode,
             showHvSocGauge, showCabinTemp,
             showClusterSpeed, showClusterLaneBar, showClusterTurnCard, showClusterEtaPill, turnDistMeters,
+            hostModeActive: this.hostModeActive,
+            crHostLayers: this.crHostLayers,
+            hostingState: this.hostingState,
+            hostingReason: this.hostingReason,
+            mapHostedInto: this.mapHostedInto,
+            wazeStatus: this.wazeStatus,
             wocHudOverlay, hudYieldedToNav, hudYieldReason,
             showFallbackMap: showMapOverlay, showMapOverlay, clusterSlotMode,
             rightWidgetMode, rightWidgetPage,
@@ -2500,6 +2599,11 @@ class OverlayRenderer {
         this.ready = false;
         this.hostConfigKey = '';
         this.hostModeActive = 'off';
+        this.crHostLayers = false;
+        this.hostingState = '';
+        this.hostingReason = '';
+        this.mapHostedInto = '';
+        this.wazeStatus = null;
         this.bezelMaskRef = null;
         this.bezelMaskVisible = false;
         this.lastHudNavKey = '';

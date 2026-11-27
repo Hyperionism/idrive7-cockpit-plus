@@ -239,6 +239,10 @@ function decodeEvent(e) {
 
     const base = baseDecodeEvent(e);
     if (!base) return null;
+    if (u.kind === 'intersection' && base.dir === 'NONE' && b && b.turnDirection !== undefined) {
+        const altDir = enumOf('TurnDirection', b.turnDirection);
+        if (altDir) base.dir = altDir;
+    }
     const isHwyExit = base.kind === 'branch' || /^EXIT_/.test(base.geom || '');
     const desc = decodeDescription(b, isHwyExit);
     base.passive = false;
@@ -544,6 +548,9 @@ class NavTracker {
         this.hudSlots = '';
         this.wocHudShowing = false;
         this.lastErr = null;
+        this.lastEventRaw = 0;
+        this.lastEventCount = 0;
+        this.lastEventKinds = [];
         this._subs = [];
         this._elTimer = null;
         this._stopped = false;
@@ -805,6 +812,15 @@ class NavTracker {
         const now = typeof nowMs === 'number' ? nowMs : mono();
         if (typeof askedAt === 'number' && askedAt < this.route.resetAt) return { ok: false, stale: true };
         const r = decodeEvents(reply);
+        const v0 = isObj(reply) && Array.isArray(reply.viewContent) ? reply.viewContent[0] : null;
+        const rawEvs = v0 && Array.isArray(v0.eventsInView) ? v0.eventsInView : [];
+        this.lastEventRaw = rawEvs.length;
+        this.lastEventCount = r.events.length;
+        this.lastEventKinds = rawEvs.slice(0, 4).map((e) => {
+            const body = e && isObj(e.maneuver) ? e.maneuver : e;
+            const u = unionOf(body);
+            return u ? u.kind : '?';
+        });
         if (!r.ok) { this.lastErr = r.error; return r; }
         this.lastErr = null;
         if (r.events[0]) {
@@ -851,16 +867,28 @@ class NavTracker {
     currentManeuver(nowMs) {
         const now = typeof nowMs === 'number' ? nowMs : mono();
         const bmwActive = this.route.state === 'ACTIVE' || this.route.state === 2;
+        const routeAlive = bmwActive || this.route.carplay === true || this.route.aa === true;
         const dartOk = this.dart && (now - this.dartAt <= STALE_MS || bmwActive);
         const renOk = this.renderedTurn && (now - this.renderedTurnAt <= STALE_MS || bmwActive);
-        const niOk = this.nextInt && bmwActive && (now - this.nextIntAt <= 30000);
-        const m = (this.turn && now - this.turnAt <= STALE_MS) ? this.turn
-            : (dartOk ? this.dart
-                : (renOk ? this.renderedTurn
-                    : (niOk ? this.nextInt : null)));
+        const niOk = this.nextInt && routeAlive && (now - this.nextIntAt <= 30000);
+        let src = '';
+        let m = null;
+        if (this.turn && now - this.turnAt <= STALE_MS) {
+            m = this.turn;
+            src = 'events';
+        } else if (dartOk) {
+            m = this.dart;
+            src = 'dart';
+        } else if (renOk) {
+            m = this.renderedTurn;
+            src = 'rendered';
+        } else if (niOk) {
+            m = this.nextInt;
+            src = 'next_int';
+        }
         if (!m) return null;
         const lanesOut = this._withLanePromo(this.lanes, now);
-        return Object.assign({}, m, { lanes: lanesOut });
+        return Object.assign({}, m, { lanes: lanesOut, src });
     }
 
     _pollStatusFiles(nowWallMs) {
@@ -996,6 +1024,10 @@ class NavTracker {
             wocHudShowing: this.wocHudShowing,
             hudSlots: this.hudSlots,
             rawNextIntersection: this.rawNextIntersection,
+            lastErr: this.lastErr,
+            lastEventRaw: this.lastEventRaw,
+            lastEventCount: this.lastEventCount,
+            lastEventKinds: this.lastEventKinds,
             summary,
         };
     }

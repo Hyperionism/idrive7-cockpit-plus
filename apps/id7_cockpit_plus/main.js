@@ -454,10 +454,18 @@ mgu.run({
                     ? 'Vector Sans'
                     : ('Ubuntu' + (fSt.error ? ' (' + fSt.error + ')' : '')));
             const refusedNote = renderer.refused.length ? (' | Refused: ' + renderer.refused[renderer.refused.length - 1]) : '';
+            const hostTag = !sum.crHostLayers
+                ? 'host=no-host-layers'
+                : (sum.hostingState
+                    ? ('host=' + sum.hostingState + (sum.hostingReason ? '(' + sum.hostingReason + ')' : ''))
+                    : ('host=' + (sum.hostModeActive || 'off')));
+            const wocTag = sum.wazeStatus
+                ? ('woc=' + (sum.wazeStatus.state || '?') + '@' + (sum.wazeStatus.target || '?') + (sum.wazeStatus.error ? '(' + sum.wazeStatus.error + ')' : ''))
+                : 'woc=absent';
             setTwoRow(
                 'DIAG_RENDER',
                 'Cluster & HUD Renderer (' + connState + ' - Font: ' + fontTag + ')',
-                clusterModeNote + ' | ' + hudNote + ' | Layers: ' + renderer.layerCount() + '/64 (' +
+                clusterModeNote + ' | ' + hostTag + (sum.mapHostedInto ? '->' + sum.mapHostedInto : '') + ' | ' + wocTag + ' | ' + hudNote + ' | Layers: ' + renderer.layerCount() + '/64 (' +
                     (renderer.pixelBytesTotal() / 1048576).toFixed(2) + ' MiB)' + refusedNote
             );
 
@@ -466,7 +474,9 @@ mgu.run({
             const cockpitNavNote = (sum.showClusterLaneBar ? ' | 5AU:On' : '') +
                 (sum.showClusterTurnCard ? ' | Card:On' : '') +
                 (sum.showClusterEtaPill ? ' | ETA:On' : '') +
-                (typeof sum.turnDistMeters === 'number' ? (' | Turn:' + sum.turnDistMeters + 'm') : '');
+                (typeof sum.turnDistMeters === 'number' ? (' | Turn:' + sum.turnDistMeters + 'm') : '') +
+                (hn.show && hn.show.src ? (' | Src:' + hn.show.src) : '') +
+                (hn.routeActive ? (' | ev=' + (hn.lastEventCount || 0) + '/' + (hn.lastEventRaw || 0) + (hn.lastEventKinds && hn.lastEventKinds.length ? '(' + hn.lastEventKinds.join(',') + ')' : '')) : '');
             const navDetail = (hn.summary || 'No active route') +
                 cockpitNavNote +
                 (hn.hudSlots ? (' | DCSM: ' + hn.hudSlots) : '') +

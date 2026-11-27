@@ -864,6 +864,7 @@ module.exports = {
     ROAD_H,
     drawHudRoadBanner,
     drawExitBadge,
+    measureExitBadge,
     drawRoadShield,
     measureRoadShield,
     drawHudNav,

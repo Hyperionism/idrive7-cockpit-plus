@@ -12,6 +12,12 @@ const PSI_PER_BAR = 14.5037738;
 const US_MPG_FACTOR = 235.214583;
 const UK_MPG_FACTOR = 282.480936;
 
+let getLanguage = () => 'en';
+try {
+    const i18nMod = require('./kit/i18n');
+    if (i18nMod && typeof i18nMod.getLanguage === 'function') getLanguage = i18nMod.getLanguage;
+} catch (e) { /* standalone unit test without bundled ./kit/i18n */ }
+
 const US_PRESET = {
     system: 'us',
     tempUnit: 'F',
@@ -65,10 +71,20 @@ function decodeCarUnits(rawExt, rawBn, rawBc) {
         else if (p === 2 || ps === '2' || /^KPA$/.test(ps)) out.pressUnit = 'bar';
         else if (p === 3 || ps === '3' || /^PSI$/.test(ps)) out.pressUnit = 'psi';
 
-        const d = obj.unitOfMeasurementDistance !== undefined ? obj.unitOfMeasurementDistance : obj.distance;
+        const d = obj.unitOfMeasurementDistance !== undefined ? obj.unitOfMeasurementDistance
+            : (obj.distance !== undefined ? obj.distance
+                : (obj.statusUnitOfMeasurementDistance !== undefined ? obj.statusUnitOfMeasurementDistance : obj.distanceUnit));
         const ds = normStr(d);
-        if (d === 1 || ds === '1' || /^KM$|KILOMETER/.test(ds)) { out.distUnit = 'km'; out.speedUnit = 'kmh'; }
-        else if (d === 2 || ds === '2' || /^MI$|MILE/.test(ds)) { out.distUnit = 'mi'; out.speedUnit = 'mph'; }
+        if (d === 1 || ds === '1' || /^KM$|KILOMET|KM_?H|KM\/H/.test(ds)) { out.distUnit = 'km'; out.speedUnit = 'kmh'; }
+        else if (d === 2 || ds === '2' || /^MI$|MILE|MPH/.test(ds)) { out.distUnit = 'mi'; out.speedUnit = 'mph'; }
+
+        const sp = obj.statusUnitOfMeasurementSpeedBC !== undefined ? obj.statusUnitOfMeasurementSpeedBC
+            : (obj.statusUnitOfMeasurementSpeed !== undefined ? obj.statusUnitOfMeasurementSpeed : obj.speedUnit);
+        const sps = normStr(sp);
+        if (!out.speedUnit && sps) {
+            if (/KM_?H|KM\/H|KPH/.test(sps)) { out.speedUnit = 'kmh'; if (!out.distUnit) out.distUnit = 'km'; }
+            else if (/MPH|MI_?H/.test(sps)) { out.speedUnit = 'mph'; if (!out.distUnit) out.distUnit = 'mi'; }
+        }
 
         const fc = obj.unitOfMeasurementConsumptionFuel !== undefined
             ? obj.unitOfMeasurementConsumptionFuel
@@ -93,7 +109,17 @@ function decodeCarUnits(rawExt, rawBn, rawBc) {
     apply(rawExt);
     apply(rawBc);
 
-    // Derive sensible linked defaults if car only reported partial fields (e.g. only temp/distance)
+    // Derive sensible linked defaults if car only reported partial fields (e.g. Celsius temp without distance)
+    if (!out.distUnit) {
+        if (out.fuelEffUnit === 'l_100km' || out.fuelEffUnit === 'km_l' || out.pressUnit === 'bar' ||
+            (out.tempUnit === 'C' && out.fuelEffUnit !== 'mpg_uk')) {
+            out.distUnit = 'km';
+            out.speedUnit = 'kmh';
+        } else if (out.fuelEffUnit === 'mpg_us' || out.fuelEffUnit === 'mpg_uk' || out.tempUnit === 'F' || out.pressUnit === 'psi') {
+            out.distUnit = 'mi';
+            out.speedUnit = 'mph';
+        }
+    }
     if (!out.speedUnit && out.distUnit) out.speedUnit = out.distUnit === 'mi' ? 'mph' : 'kmh';
     if (!out.fuelEffUnit && out.distUnit) {
         out.fuelEffUnit = out.distUnit === 'mi' ? (out.tempUnit === 'C' ? 'mpg_uk' : 'mpg_us') : 'l_100km';
@@ -122,7 +148,8 @@ function resolveUnits(settingsObj, detectedCarUnits) {
     else if (sys === 'uk') base = Object.assign({}, UK_PRESET);
     else {
         const car = detectedCarUnits && typeof detectedCarUnits === 'object' ? detectedCarUnits : {};
-        base = Object.assign({}, US_PRESET, car);
+        const fallbackPreset = getLanguage() === 'zh-CN' ? METRIC_PRESET : US_PRESET;
+        base = Object.assign({}, fallbackPreset, car);
         base.system = 'auto';
         if (base.distUnit === 'mi') {
             base.speedUnit = 'mph';
