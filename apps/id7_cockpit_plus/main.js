@@ -332,7 +332,7 @@ mgu.run({
 
         const POS_TARGETS = {
             turn_card:     { label: 'Top-center iOS turn card', xKey: 'turnCardNudgeX',     yKey: 'turnCardNudgeY',     minX: -520, maxX: 520, minY: -18,  maxY: 500 },
-            eta_pill:      { label: 'Bottom ETA capsule',     xKey: 'etaPillNudgeX',      yKey: 'etaPillNudgeY',      minX: -520, maxX: 520, minY: -580, maxY: 40  },
+            eta_pill:      { label: 'Bottom ETA capsule',     xKey: 'etaPillNudgeX',      yKey: 'etaPillNudgeY',      minX: -520, maxX: 520, minY: -560, maxY: 60  },
             speed_overlay: { label: 'Digital speed overlay',  xKey: 'speedOverlayNudgeX', yKey: 'speedOverlayNudgeY', minX: -300, maxX: 960, minY: -300, maxY: 220 },
             cluster_all:   { label: 'Cluster outer readouts', xKey: 'clusterNudgeX',      yKey: 'clusterNudgeY',      minX: -12,  maxX: 12,  minY: -12,  maxY: 12  },
             hud_all:       { label: 'HUD telemetry & nav',    xKey: 'hudNudgeX',          yKey: 'hudNudgeY',          minX: -40,  maxX: 40,  minY: -40,  maxY: 40  },
@@ -417,7 +417,7 @@ mgu.run({
                 return;
             }
 
-            const clusterNote = sum.showMapOverlay ? ('  |  ' + tr('Map 0x100 (BC OK)'))
+            const clusterNote = (sum.showMapOverlay || sum.nativePanelReleased) ? ('  |  ' + tr('Map 0x100 (BC OK)'))
                 : (sum.isCharging ? ('  |  ' + tr('Charging (auto)'))
                     : (sum.hudYieldedToNav ? ('  |  ' + tr('HUD yielded') + ' (' + (sum.hudYieldReason || 'mini-map') + ')')
                         : (sum.wocHudOverlay ? ('  |  ' + tr('HUD over Waze'))
@@ -483,8 +483,9 @@ mgu.run({
                 ? (renderer.slotStatus.panelSlot + ' (BLOCKS POWER GAUGE - revert local.conf!)')
                 : (renderer.slotStatus.conflictScene
                     ? (renderer.slotStatus.sceneId + ' (CONFLICTS WITH MAP - set 0x010004f8!)')
-                    : (sum.showMapOverlay ? 'map 0x100 (BC widget OK)'
-                        : (sum.panelAllowed ? ('panel ' + renderer.slotStatus.panelSlot + ' [RW:' + (sum.rightWidgetPage || 'off') + ']') : 'cluster idle')));
+                    : (sum.nativePanelReleased ? 'native 0x100 (0x203 off -> stock BC 0x200)'
+                        : (sum.showMapOverlay ? 'map 0x100 (BC widget OK)'
+                            : (sum.panelAllowed ? ('panel ' + renderer.slotStatus.panelSlot + ' [RW:' + (sum.rightWidgetPage || 'off') + ']') : 'cluster idle'))));
             const hudNote = sum.hudYieldedToNav ? ('HUD yielded (' + (sum.hudYieldReason || 'nav') + ')')
                 : (sum.wocHudOverlay ? 'HUD 3-line over Waze'
                     : (sum.showOwnHudNav ? ('HUD ' + (sum.showHudRoad ? 'RoadBanner+Nav' : 'FullNav')) : (sum.showHud ? 'HUD 3-line' : 'HUD off')));
@@ -501,8 +502,8 @@ mgu.run({
                 : (hostStateWord
                     ? ('host=' + hostStateWord + (sum.hostingReason ? '(' + sum.hostingReason + ')' : ''))
                     : ('host=' + (sum.hostModeActive || 'native')));
-            const maskTag = (sum.crHostLayers && sum.hostModeActive && sum.hostModeActive !== 'native')
-                ? (' mask=' + (sum.bezelMaskMode || 'off') + (sum.crHostMask ? '(shader)' : '(hm=0)'))
+            const maskTag = (sum.crHostLayers && sum.bezelMaskMode && sum.bezelMaskMode !== 'off')
+                ? (' mask=' + sum.bezelMaskMode + (sum.crHostMask ? '(shader)' : '(hm=0)'))
                 : '';
             const wocTag = sum.wazeStatus
                 ? ('woc=' + (sum.wazeStatus.state || '?') + '@' + (sum.wazeStatus.target || '?') + (sum.wazeStatus.error ? '(' + sum.wazeStatus.error + ')' : ''))

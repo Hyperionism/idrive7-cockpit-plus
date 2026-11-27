@@ -42,7 +42,7 @@ const DEFAULT_LAYOUT = {
     eta_pill: {
         enabled: true,
         x: 760,
-        y: 648,
+        y: 628,
         w: 400,
         h: 46,
     },
