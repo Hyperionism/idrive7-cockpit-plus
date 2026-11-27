@@ -18,9 +18,9 @@ const UPSTREAM_PINS = {
   idriveAppsCommit: '9da968c8644ef4f6bcce174b0836f9f24d8db7fb',
   mguStoreRepo: 'robertnisipeanu/mgu-store',
   mguStoreCommit: '37702a880f1ed5fd346f4c944127fb276920be9c',
-  clusterRenderVersion: '0.8.14',
-  wazeOnClusterVersion: '0.14.16',
-  robertnWazeAppVersion: '0.6.16',
+  clusterRenderVersion: '2.9.0',
+  wazeOnClusterVersion: '2.9.0',
+  robertnWazeAppVersion: '0.6.17',
   mguRenderVersion: '0.6.26'
 };
 
@@ -74,10 +74,11 @@ function patchIdriveApps(rootDir) {
   // 1. Unlock native 1632x720 map texture ceiling while keeping 1088x480 map_quad default
   patchMapGeometry(crDir);
 
-  // 2. Bump cluster-render SemVer cleanly
+  // 2. Bump cluster-render SemVer cleanly (> 2.0.29 forks) & ensure uninstallable in MGU Store
   const crCompPath = path.join(crDir, 'component.json');
   const crComp = JSON.parse(fs.readFileSync(crCompPath, 'utf8'));
   crComp.version = UPSTREAM_PINS.clusterRenderVersion;
+  crComp.uninstallable = true;
   fs.writeFileSync(crCompPath, JSON.stringify(crComp, null, 2) + '\n', 'utf8');
 
   // 3. Configure waze-on-cluster defaults for crisp 1632x720 hosted FullView (keep opt-in keys = 0 for opt_in_test)
@@ -120,10 +121,11 @@ function patchIdriveApps(rootDir) {
     fs.writeFileSync(patchdPath, patchd, 'utf8');
   }
 
-  // 5. Bump waze-on-cluster SemVer & align app release.json
+  // 5. Bump waze-on-cluster SemVer (> 2.0.29 forks), ensure uninstallable & align app release/UI
   const wocCompPath = path.join(wocDir, 'component.json');
   const wocComp = JSON.parse(fs.readFileSync(wocCompPath, 'utf8'));
   wocComp.version = UPSTREAM_PINS.wazeOnClusterVersion;
+  wocComp.uninstallable = true;
   wocComp.requires = Object.assign({}, wocComp.requires || {}, {
     'cluster-render': UPSTREAM_PINS.clusterRenderVersion
   });
@@ -138,9 +140,36 @@ function patchIdriveApps(rootDir) {
     fs.writeFileSync(wocRelPath, JSON.stringify(wocRel, null, 2) + '\n', 'utf8');
   }
 
+  // 6. Patch Maps on cluster UI (_outdated) so 1632x720 + 690x490+380+110 shows "Patched" instead of "Update needed"
+  const wocCtrlPath = path.join(wocAppDir, 'src', 'waze_cluster_control.js');
+  if (fs.existsSync(wocCtrlPath)) {
+    let wocCtrl = fs.readFileSync(wocCtrlPath, 'utf8');
+    if (wocCtrl.indexOf("'1632x720'") === -1) {
+      wocCtrl = replaceExactOrThrow(
+        wocCtrl,
+        "(ps.res && ps.res !== SIZE) || (ps.safe && ps.safe !== SAFE) || ps.mapurl === 'no-eta'",
+        "(ps.res && ps.res !== SIZE && ps.res !== '1632x720') || (ps.safe && ps.safe !== SAFE && ps.safe !== '690x490+380+110') || ps.mapurl === 'no-eta'",
+        'apps/robertn_waze_cluster/src/waze_cluster_control.js'
+      );
+      fs.writeFileSync(wocCtrlPath, wocCtrl, 'utf8');
+    }
+  }
+  const wocAppMetaPaths = [
+    path.join(wocAppDir, 'package', 'package.json'),
+    path.join(wocAppDir, 'mgu-app.json')
+  ];
+  for (const mp of wocAppMetaPaths) {
+    if (fs.existsSync(mp)) {
+      const mj = JSON.parse(fs.readFileSync(mp, 'utf8'));
+      mj.version = UPSTREAM_PINS.robertnWazeAppVersion;
+      fs.writeFileSync(mp, JSON.stringify(mj, null, 2) + '\n', 'utf8');
+    }
+  }
+
   return {
     clusterRenderVersion: crComp.version,
-    wazeOnClusterVersion: wocComp.version
+    wazeOnClusterVersion: wocComp.version,
+    robertnWazeAppVersion: UPSTREAM_PINS.robertnWazeAppVersion
   };
 }
 
