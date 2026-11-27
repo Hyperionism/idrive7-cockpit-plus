@@ -12,7 +12,7 @@
 ## 简体中文
 
 > [!NOTE]
-> **实车验证状态**：核心 `FullView 1632px` 地图投屏（高德地图、Apple Maps 全程路线与纯地图去重补丁）、5AU 车道引导、居中转向卡、ETA 胶囊、右侧媒体卡片及简体中文菜单已在 **BMW G20（iDrive 7 `MGU P18_23w44.2-1-3` + KOMBI4 仪表 + CarPlay）** 上实测跑通；`v0.9.8` 进一步加入 **DstOut 透明切角遮罩**、**原生居中模式真零遮挡修复** 与 **全新识别图标**。在车机安装/调试前请做好配置备份，切勿卸载 `mgu-store` 与 `mgu-deploy` 等基础组件。
+> **实车验证状态**：核心 `FullView 1632px` 地图投屏（高德地图、Apple Maps 全程路线与纯地图去重补丁）、5AU 车道引导、居中转向卡、ETA 胶囊、右侧媒体卡片及简体中文菜单已在 **BMW G20（iDrive 7 `MGU P18_23w44.2-1-3` + KOMBI4 仪表 + CarPlay）** 上实测跑通；`v0.9.9` 将透明切角遮罩直接嵌入 `cluster-render 2.9.1` 视频着色器内部（使用 GLSL `discard` 与硬件透明混合，彻底解决叠加层把原车表盘抹黑的问题），并新增数字车速防重影自动隐藏逻辑。在车机安装/调试前请做好配置备份，切勿卸载 `mgu-store` 与 `mgu-deploy` 等基础组件。
 
 ![Cockpit+ 全屏仪表驾驶舱全景示意](docs/cockpit-overview.png)
 
@@ -21,8 +21,8 @@
 ### 核心功能一览
 
 - **三种零遮挡地图显示模式**（支持高德地图 / 百度地图 / Apple Maps / Google Maps / Waze）：
-  1. **`全屏地图 · 保留原厂双表盘 (fullview_dials`，默认)**：通过 `0x203` 将地图延展至仪表顶部边缘（`y=0..616`），并用 **`DstOut` 混合模式**将左右双表盘区域擦成透明，**既全高显示大地图，又完整保留原厂时速/转速双环、指针与油量/水温表**。
-  2. **`全屏地图 · 宽幅沉浸 1632px (fullview)`**：奥迪式超宽视野铺满中央区域，配合超椭圆透明弧形切角避让油量、水温与底栏，居中车速与右侧卡片直接浮显于地图上。
+  1. **`全屏地图 · 保留原厂双表盘 (fullview_dials`，默认)**：通过 `0x203` 将地图延展至仪表顶部边缘（`y=0..616`），并由 `cluster-render 2.9.1` 在**地图视频着色器内部执行 `discard` 镂空与透明羽化混合**，从像素写入阶段就避开左右双表盘区域，**既全高显示大地图，又 100% 原样保留原厂时速/转速双环、指针与油量/水温表**。
+  2. **`全屏地图 · 宽幅沉浸 1632px (fullview)`**：奥迪式超宽视野铺满中央区域，配合超椭圆视频着色器透明弧形切角避让油量、水温与底栏，居中车速（自动仅在此模式下显示，避免重影）与右侧卡片直接浮显于地图上。
   3. **`原生居中地图 1088×480 (native)`**：自动调用 `unhost` 退回硬件后层通道 `0x100`，位于原厂表盘之后 100% 零遮挡，同时照常保留全部外圈数据与 HUD 增强。
 - **Apple Maps 实车专项优化**：通过 `--safe 840x570+396+40`（`280×190 pt @3x`）与纯地图模式 `maps:/car/instrumentcluster/map`（`itemType 1`），开始路线导航时稳定显示全程路径且不弹出苹果自带重复灰底卡片。
 - **驾驶舱核心小组件（`panel 0x203`，严格避让 `GEAR_WIN 1380..1460` 安全区）**：
@@ -42,12 +42,12 @@
 
 | 组件名 | 类型 | 版本 | 说明 |
 | :--- | :--- | :--- | :--- |
-| **`cluster-render`** | 工具 | `2.9.0` | RAMSES 19 + Dcsm2 仪表与 HUD 合成器，支持 `1632x720`、`host_layers` 与 Porter-Duff `render_state`（基于 `robertnisipeanu/idrive-apps`） |
+| **`cluster-render`** | 工具 | `2.9.1` | RAMSES 19 + Dcsm2 仪表与 HUD 合成器，支持 `1632x720`、`host_layers` 与原生视频着色器透明切角 `host_mask`（基于 `robertnisipeanu/idrive-apps`） |
 | **`waze-on-cluster`** | 工具 | `2.9.0` | FullView 全屏 CarPlay / AA 地图解码器（`1632x720`、`--safe 840x570+396+40`、Apple Maps 纯地图 `itemType 1`）与 HUD 投影 |
 | **`robertn_waze_cluster`** | 应用 | `0.6.17` | *Maps on cluster* 车机控制界面（已适配识别 `1632x720` 全屏补丁状态） |
 | **`mgu-render`** | 工具 *（可选）* | `0.6.26` | OpenGL ES 2 GPU 渲染守护进程（源自 `robertnisipeanu/mgu-store`） |
 | **`cockpit-fullview`** | 工具 | `1.0.0` | 自动可逆修复旧版 `cluster-render.local.conf` 槽位冲突并禁用重叠原生 C++ 浮窗 |
-| **`id7_cockpit_plus`** | 应用 | `0.9.8` | **Cockpit+ 主程序**：中文菜单、3 种零遮挡全屏/原生地图模式、透明 `DstOut` 切角、全套仪表与 HUD 控件及自由坐标微调 |
+| **`id7_cockpit_plus`** | 应用 | `0.9.9` | **Cockpit+ 主程序**：中文菜单、3 种零遮挡全屏/原生地图模式、着色器级透明切角、防车速重影、全套仪表与 HUD 控件及自由坐标微调 |
 
 ### 通过 MGU Store 安装（Releases 源）
 
@@ -62,7 +62,7 @@
 
 > [!IMPORTANT]
 > - 切勿卸载 **`mgu-store`** 和 **`mgu-deploy`**。
-> - 如果此前曾通过第三方安装包/其他源安装过 `cluster-render`，请在 MGU Store 的 **Sources** 中**暂时仅保留 `Hyperionism/idrive7-cockpit-plus` 一个包含 `cluster-render` 的软件源**再点击安装/更新，即可平滑升级至 `2.9.0`。
+> - 如果此前曾通过第三方安装包/其他源安装过 `cluster-render`，请在 MGU Store 的 **Sources** 中**暂时仅保留 `Hyperionism/idrive7-cockpit-plus` 一个包含 `cluster-render` 的软件源**再点击安装/更新，即可平滑升级至 `2.9.1`。
 
 ### 本地构建、测试与桌面模拟器
 
@@ -85,7 +85,7 @@ npm run bench
 ## English
 
 > [!NOTE]
-> **Real-Vehicle Verified Base + New v0.9.8 Features**: Core `1632px` FullView CarPlay projection (AMAP & Apple Maps full-route with pure map-only `itemType 1`), 5AU lanes, centered turn card, ETA pill, right-wing media widget, and `zh-CN` UI have been verified on a physical **BMW G20 (iDrive 7 `MGU P18_23w44.2-1-3`, KOMBI4, CarPlay)**. `v0.9.8` adds **Porter-Duff `DstOut` alpha-erasing dial/bezel cutouts**, **true behind-dial native `0x100` unhost mode**, and a **custom BMW-style Cockpit+ tile icon**. Always back up configs and never uninstall `mgu-store` or `mgu-deploy`.
+> **Real-Vehicle Verified Base + New v0.9.9 Native Shader Mask**: Core `1632px` FullView CarPlay projection (AMAP & Apple Maps full-route with pure map-only `itemType 1`), 5AU lanes, centered turn card, ETA pill, right-wing media widget, and `zh-CN` UI have been verified on a physical **BMW G20 (iDrive 7 `MGU P18_23w44.2-1-3`, KOMBI4, CarPlay)**. `v0.9.9` moves the alpha cutout & GLSL `discard` directly into **`cluster-render 2.9.1`'s video fragment shaders** (eliminating black overlay occlusion against BMW's live swapchain dials), plus auto-hides the digital speed overlay whenever native dials are visible. Always back up configs and never uninstall `mgu-store` or `mgu-deploy`.
 
 ![Cockpit+ KOMBI4 Overview Diagram](docs/cockpit-overview.png)
 
@@ -94,8 +94,8 @@ npm run bench
 ### Key Features
 
 - **Three Zero-Occlusion Cluster Map Modes**:
-  1. **`FullView + Native Dials (fullview_dials`, default)**: Extends the hosted map to the top edge of `0x203` (`y=0..616`) while using a **`DstOut` alpha-erasing shader** (`zero / one_minus_src_alpha`) so BMW's native blue speedometer & tachometer rings, needles, and fuel/coolant gauges show cleanly through without opaque black blobs.
-  2. **`FullView Wide 1632px (fullview)`**: Full-width Audi-style cockpit projection across `1632x616`, paired with a smooth superellipse `DstOut` bezel cutout that clears the fuel/coolant sub-gauges and bottom status bar.
+  1. **`FullView + Native Dials (fullview_dials`, default)**: Extends the hosted map to the top edge of `0x203` (`y=0..616`) while `cluster-render 2.9.1` evaluates a native GLSL `discard` & alpha feather directly inside its video shaders so BMW's live speedometer & tachometer rings, needles, and gauges are never overwritten.
+  2. **`FullView Wide 1632px (fullview)`**: Full-width Audi-style cockpit projection across `1632x616`, paired with a smooth superellipse video-shader bezel cutout that clears the fuel/coolant sub-gauges and bottom status bar (digital speed overlay auto-enables in this mode).
   3. **`Native Center 1088x480 (native)`**: Calls `cr.unhost('map')` to return the map to hardware slot `0x100` **behind** BMW's stock dials for 100% zero dial occlusion while retaining all outer Cockpit+ and HUD overlays.
 - **Apple Maps Pure Map-Only Route Fix**: Uses `--safe 840x570+396+40` (`280×190 pt @3x`) and `maps:/car/instrumentcluster/map` (`itemType 1`) so active Apple Maps routes stay rendered without duplicate grey turn cards.
 - **Calibrated KOMBI4 Panel (`0x203`) & HUD (`0x323`) Widgets**:
@@ -109,12 +109,12 @@ npm run bench
 
 | Component | Kind | Version | Purpose |
 | :--- | :--- | :--- | :--- |
-| **`cluster-render`** | Tool | `2.9.0` | Shared RAMSES 19 + Dcsm2 cluster/HUD compositor with `1632x720`, `host_layers`, and Porter-Duff `render_state` |
+| **`cluster-render`** | Tool | `2.9.1` | Shared RAMSES 19 + Dcsm2 cluster/HUD compositor with `1632x720`, `host_layers`, and native video-shader `host_mask` cutouts |
 | **`waze-on-cluster`** | Tool | `2.9.0` | FullView CarPlay / AA H.264 decoder (`1632x720`, `--safe 840x570+396+40`, Apple Maps `itemType 1`) + HUD projection |
 | **`robertn_waze_cluster`** | App | `0.6.17` | *Maps on Cluster* iDrive UI (updated to recognize `1632x720` FullView patching) |
 | **`mgu-render`** | Tool *(optional)* | `0.6.26` | 60 fps OpenGL ES 2 GPU renderer daemon (from `robertnisipeanu/mgu-store`) |
 | **`cockpit-fullview`** | Tool | `1.0.0` | Reversibly repairs conflicting `cluster-render.local.conf` overrides and disables overlapping native C++ pods |
-| **`id7_cockpit_plus`** | App | `0.9.8` | **Cockpit+**: 3 map modes with `DstOut` transparent cutouts, 5AU lanes, turn card, ETA pill, right-wing widgets, HUD nav & Position Studio |
+| **`id7_cockpit_plus`** | App | `0.9.9` | **Cockpit+**: 3 map modes with shader-level transparent cutouts, 5AU lanes, turn card, ETA pill, right-wing widgets, HUD nav & Position Studio |
 
 ### Install via MGU Store (Releases Feed)
 
