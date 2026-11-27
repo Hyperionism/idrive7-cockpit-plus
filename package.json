@@ -1,8 +1,8 @@
 {
   "name": "idrive7-cockpit-plus",
-  "version": "0.9.10",
+  "version": "0.9.13",
   "private": true,
-  "description": "Cockpit+ overlay suite for BMW iDrive 7 (MGU): calibrated feathered FullView map, top-center 5AU turn card, arrival ETA pill, right wing widgets, per-line vitals, and bold HUD nav",
+  "description": "Cockpit+ overlay suite for BMW iDrive 7 (MGU): smooth SDF FullView 1632x668, Center Small Map releasing 0x203 for genuine stock right BC card (0x200) + standby rescue, top-center 5AU turn card, raised ETA pill, and bold HUD nav",
   "license": "GPL-3.0-only",
   "scripts": {
     "test": "node test/run_tests.js && node test/fullview_companion_test.js",

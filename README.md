@@ -12,7 +12,7 @@
 ## 简体中文
 
 > [!NOTE]
-> **实车验证状态**：核心 `FullView` 地图投屏（高德地图、Apple Maps 全程路线与纯地图去重补丁）、转向卡、ETA 胶囊、右侧媒体卡片及简体中文菜单已在 **BMW G20（iDrive 7 `MGU P18_23w44.2-1-3` + KOMBI4 仪表 + CarPlay）** 上实测跑通；`v0.9.10` 基于实车拍摄像素完成全新贴合标定：仅保留 **全屏地图** 与 **居中标准小地图** 两种地图模式，大幅拓宽并柔和羽化地图至原厂表盘刻度内沿，上下延伸至顶部 5AU 与底部车道栏上方，并加入熄火驻车地图保持机制。在车机安装/调试前请做好配置备份，切勿卸载 `mgu-store` 与 `mgu-deploy` 等基础组件。
+> **实车验证状态**：核心 `FullView` 地图投屏（高德地图、Apple Maps 全程路线与纯地图去重补丁）、转向卡、ETA 胶囊、右侧媒体卡片及简体中文菜单已在 **BMW G20（iDrive 7 `MGU P18_23w44.2-1-3` + KOMBI4 仪表 + CarPlay）** 上实测跑通；`v0.9.13` 基于与多媒体背景同源的 KOMBI4 实车单应性标定轮廓（`WING_TOP_Y` / `WING_OUTER_X` / `WING_BOTTOM_Y`）升级全屏遮罩 SDF 曲线以精准贴合双表盘弧度，修复公制模式下「车内温度」默认与原车 `+14.5°C` 重叠的问题，并保留居中标准小地图 (`native`) 正常行车释放 `0x203` 直接显示原厂右侧 BC 卡片（`0x200`）与熄火保活接管机制。在车机安装/调试前请做好配置备份，切勿卸载 `mgu-store` 与 `mgu-deploy` 等基础组件。
 
 ![Cockpit+ 全屏仪表驾驶舱全景示意](docs/cockpit-overview.png)
 
@@ -20,17 +20,17 @@
 
 ### 核心功能一览
 
-- **两种简洁地图显示模式**（支持高德地图 / 百度地图 / Apple Maps / Google Maps / Waze）：
-  1. **`全屏地图 · 融合双表盘 (fullview_dials`，默认)**：通过 `0x203` 将地图纵向扩展至 `y=0..642`（上至顶部 5AU 区域，下延至原车底部里程/原厂车道栏廊道），并由 `cluster-render 2.9.2` 在视频着色器内部按 **BMW 实车六边形表盘刻度坐标** 进行宽幅镂空与柔边羽化混合（边缘柔和衔接 `340..30`、`7..1`、限速与 `1/min x1000` 内沿而不遮挡），同时自动开启无框数字车速。
-  2. **`居中标准小地图 (native)`**：地图渲染在 `0x100` 原车居中通道，**自动隐藏重绘车速与右侧媒体/胎压/行程卡片**，完全交由原厂仪表显示；若导航过程中熄火驻车导致 `0x100` 锁定（`idle_ms = 600000` 保活），系统自动在 `0x203` 中央廊道内接管显示地图（`mask_mode=2`），保持熄火界面完整。
-- **精简导航卡片不重复**：仪表端复用 BMW 原厂底部车道栏，**移除仪表端重复的 5AU 车道条**（HUD 矢量 6 车道引导保留），并将 **iOS 转向提示卡上移至顶部居中 5AU 摄像头空白区（`y=18`）**。
-- **Cockpit+ 外圈读数稳固保留**：切换为 **`仅外圈车况读数 (map_only)`** 时，油温/水温、12V 电量、混动 HV 电量、刹车力度条、档位与车内温度继续保留在各自原生外圈位置（`0x203` 仅隐藏右侧卡片与全屏托管，交还原车右侧 BC 视图），不再缩入中心小地图。
+- **两种平滑无锯齿地图模式**（全屏模式支持 `68 / 96（默认）/ 130 px` 边缘柔化调节）：
+  1. **`全屏地图 · 融合双表盘 (fullview_dials`，默认)**：地图扩展至 `y=0..668`（下延至抬高的 ETA 胶囊背后，严格避让 `GEAR_WIN`），由 `cluster-render 2.9.4` 采用与多媒体专辑背景同源的 **KOMBI4 实车单应性标定外沿轮廓 (`WING_TOP_Y` / `WING_OUTER_X` / `WING_BOTTOM_Y`) + C1 连续平滑 SDF**，顶部贴合原车速度/转速上眉弧线自然过渡，两侧柔和衔接 `340..30`、`7..1`、限速与 `1/min x1000` 内沿，同时保留完整外圈车况（车内温度自动避让公制车外温度 `+14.5°C`：燃油车位于 `x=1712`，混动位于 `x=1170`）、5AU 转向卡、ETA 胶囊与右侧多功能卡片。
+  2. **`居中标准小地图 (native)`**：正常行车时彻底释放 `panel 0x203` 并将地图交回原生 `0x100` 槽位（不显示软件重绘右卡，也不渲染 `0x203` 叠层），**直接恢复 100% 原厂右侧 BC 卡片（`slot 0x200`，方向盘 BC 键原生响应）与原厂双表盘/车速**，HUD（`0x323`）继续正常运行；当车辆熄火且处于导航中（`0x100` 被锁）时，自动临时借用 `0x203`（`mask_mode=3`）保活中央地图（同样不重绘右侧卡片），一旦重新点火行车立即释放 `0x203` 并秒回原厂 BC 卡片。
+- **精简导航卡片不重复 & ETA 上移避让**：仪表端复用原厂底部车道栏，**顶部 5AU 区域放置 iOS 转向提示卡（`y=18`）**；**底部 ETA 胶囊默认上移 20 px 至 `y=628`**，熄火显示 `Total km` 总里程时不再重叠。
+- **Cockpit+ 外圈读数稳固保留**：切换为 **`仅外圈车况读数 (map_only)`** 时，油温/水温、12V 电量、混动 HV 电量、刹车力度条、档位与车内温度保留在各自原生外圈位置（`0x203` 关闭右侧卡片与全屏托管）。
 - **Apple Maps 实车专项优化**：通过 `--safe 840x570+396+40`（`280×190 pt @3x`）与纯地图模式 `maps:/car/instrumentcluster/map`（`itemType 1`），开始路线导航时稳定显示全程路径且不弹出苹果自带重复灰底卡片。
 - **驾驶舱核心小组件（`panel 0x203`，严格避让 `GEAR_WIN 1380..1460` 安全区）**：
   - ① **顶部居中 iOS 转向提示卡**（`guidance_turn_card` at `5AU` pocket）：支持路名与绿色高速出口徽标，触发距离可在菜单设置 `200m / 350m / 500m / 800m / 导航全程常显`。
-  - ② **居中无框数字车速 + 工况双行**（`speed` + `below_speed`）：支持油耗 / 电耗、实时功率 / 转速 / 涡轮增压值，每行可独立关闭或切换无框/半透明底板。
-  - ③ **右侧多功能卡片（方向盘 BC 键循环切换）**（`right_widget`）：高清专辑封面媒体卡、行程与动力总成、四轮飞梭胎压胎温与智能异常警报、插混充电完成时间预估（居中地图模式下自动让位给原车右侧 BC）。
-  - ④ **底部 ETA 到达胶囊**（`eta_pill`）：实时预计到达时间、剩余时间与剩余里程，未导航时自动隐藏。
+  - ② **居中无框数字车速 + 工况双行**（`speed` + `below_speed`）：支持油耗 / 电耗、实时功率 / 转速 / 涡轮增压值，每行可独立关闭或切换无框/半透明底板（居中地图模式下自动隐藏重绘车速以保留原车数字车速）。
+  - ③ **右侧多功能卡片（方向盘 BC 键循环切换）**（`right_widget`）：高清专辑封面媒体卡、行程与动力总成、四轮飞梭胎压胎温与智能异常警报、插混充电完成时间预估。
+  - ④ **底部 ETA 到达胶囊**（`eta_pill`, `y=628`）：实时预计到达时间、剩余时间与剩余里程，未导航时自动隐藏。
   - ⑤⑥⑦ **外圈车况与底栏读数**：左下角发动机机油温度（冷机蓝字预警）与冷却液/波箱油温；档位 `D1–D8` 紧贴原车 `D` 旁且严格保证 `x ≥ 1461`；车内温度（随制冷/制热自动变色）；只读 DSC 液压刹车力度条/插混回充条；右下角 12V 电瓶 `% / 电压` 与混动 HV 电量显示。
 - **HUD 抬头显示增强（`0x323`）与自由坐标微调工作室**：
   - 顶部通栏路名与高速出口绿牌、3 行只读车况、前车车距与相对速度、右侧矢量转向箭头与 6 车道引导（原车路口放大图弹出时自动避让 `y ≥ 202` ACC 区）。
@@ -42,12 +42,12 @@
 
 | 组件名 | 类型 | 版本 | 说明 |
 | :--- | :--- | :--- | :--- |
-| **`cluster-render`** | 工具 | `2.9.2` | RAMSES 19 + Dcsm2 仪表与 HUD 合成器，支持 `1632x720`、`host_layers` 与标定全屏/熄火保活着色器 `host_mask`（基于 `robertnisipeanu/idrive-apps`） |
-| **`waze-on-cluster`** | 工具 | `2.9.1` | FullView 全屏 CarPlay / AA 地图解码器（`1632x720`、`--safe 840x570+396+40`、`idle_ms=600000` 熄火保活）与 HUD 投影 |
+| **`cluster-render`** | 工具 | `2.9.4` | RAMSES 19 + Dcsm2 仪表与 HUD 合成器，支持 `1632x720`、`host_layers` 与实车标定 KOMBI4 表圈轮廓平滑 SDF `mask_mode=1/3` 着色器遮罩（基于 `robertnisipeanu/idrive-apps`） |
+| **`waze-on-cluster`** | 工具 | `2.9.2` | FullView 全屏 CarPlay / AA 地图解码器（`1632x720`、`--safe 840x570+396+40`、`idle_ms=600000` 熄火保活）与 HUD 投影 |
 | **`robertn_waze_cluster`** | 应用 | `0.6.17` | *Maps on cluster* 车机控制界面（已适配识别 `1632x720` 全屏补丁状态） |
 | **`mgu-render`** | 工具 *（可选）* | `0.6.26` | OpenGL ES 2 GPU 渲染守护进程（源自 `robertnisipeanu/mgu-store`） |
 | **`cockpit-fullview`** | 工具 | `1.0.0` | 自动可逆修复旧版 `cluster-render.local.conf` 槽位冲突并禁用重叠原生 C++ 浮窗 |
-| **`id7_cockpit_plus`** | 应用 | `0.9.10` | **Cockpit+ 主程序**：标定双模式全屏/居中地图、5AU 顶置转向卡（无重复车道条）、原生模式自动隐身、熄火驻车保持、全套外圈/HUD 控件 |
+| **`id7_cockpit_plus`** | 应用 | `0.9.13` | **Cockpit+ 主程序**：与多媒体背景同源标定的平滑 SDF 全屏融合双表盘地图、居中模式释放 `0x203` 回归原厂右侧 BC 卡片（含熄火保活接管与点火自动恢复）、公制车内温度避让、5AU 顶置转向卡、ETA 避让总里程、全套外圈/HUD 控件 |
 
 ### 通过 MGU Store 安装（Releases 源）
 
@@ -62,7 +62,7 @@
 
 > [!IMPORTANT]
 > - 切勿卸载 **`mgu-store`** 和 **`mgu-deploy`**。
-> - 如果此前曾通过第三方安装包/其他源安装过 `cluster-render`，请在 MGU Store 的 **Sources** 中**暂时仅保留 `Hyperionism/idrive7-cockpit-plus` 一个包含 `cluster-render` 的软件源**再点击安装/更新，即可平滑升级至 `2.9.2`。
+> - 如果此前曾通过第三方安装包/其他源安装过 `cluster-render`，请在 MGU Store 的 **Sources** 中**暂时仅保留 `Hyperionism/idrive7-cockpit-plus` 一个包含 `cluster-render` 的软件源**再点击安装/更新，即可平滑升级至 `2.9.4`。
 
 ### 本地构建、测试与桌面模拟器
 
@@ -85,7 +85,7 @@ npm run bench
 ## English
 
 > [!NOTE]
-> **Real-Vehicle Verified Base + v0.9.10 Pixel-Calibrated Shader Mask & Standby Persistence**: Core `1632px` FullView CarPlay projection (AMAP & Apple Maps full-route with pure map-only `itemType 1`), turn card, ETA pill, right-wing media widget, and `zh-CN` UI have been verified on a physical **BMW G20 (iDrive 7 `MGU P18_23w44.2-1-3`, KOMBI4, CarPlay)**. `v0.9.10` removes the redundant Wide and cluster 5AU-lane overlays (retaining OEM cluster lanes + HUD 6-lane guidance), calibrates `mask_mode=1` to match KOMBI4's hexagonal numeral curve with soft feathering and Y-axis expansion (`y=0..642`), moves the turn card up into the `5AU` pocket, keeps outer vitals in place in `map_only` mode, hides speed/right-widget in Center Small Map (`native`) mode, and keeps the map visible during engine-off ignition standby.
+> **Real-Vehicle Verified Base + v0.9.13 Calibrated Bezel SDF (`2.9.4`), Metric Cabin Temp Fix & Stock BC Restoration (`0x200`)**: Core `1632px` FullView CarPlay projection (AMAP & Apple Maps full-route with pure map-only `itemType 1`), turn card, ETA pill, right-wing media widget, and `zh-CN` UI have been verified on a physical **BMW G20 (iDrive 7 `MGU P18_23w44.2-1-3`, KOMBI4, CarPlay)**. `v0.9.13` unifies FullView (`cluster-render 2.9.4`, `mask_mode=1`) onto the same homography-calibrated KOMBI4 outer bezel contour (`WING_TOP_Y` / `WING_OUTER_X` / `WING_BOTTOM_Y`) used by `buildStockBackdrop`, eliminates Metric `cabin_temp` overlap against stock `+14.5°C` (`x=1712` ICE, `x=1170` Metric PHEV), and keeps Center Small Map (`native`) releasing `panel 0x203` during driving so BMW's genuine stock BC card (`slot 0x200`) and native gauges show cleanly (with temporary `mask_mode=3` rescue during engine-off standby).
 
 ![Cockpit+ KOMBI4 Overview Diagram](docs/cockpit-overview.png)
 
@@ -93,13 +93,13 @@ npm run bench
 
 ### Key Features
 
-- **Two Clean Zero-Occlusion Cluster Map Modes**:
-  1. **`FullView Map (fullview_dials`, default)**: Extends the hosted map vertically across `y=0..642` (spanning the top 5AU camera pocket down across the bottom center corridor clear of `ETA_PILL`/`GEAR_WIN`) while `cluster-render 2.9.2` evaluates a pixel-calibrated hexagonal stadium GLSL `discard` & soft feather mask (`mask_mode=1`, default `76 px`) that blends cleanly onto the inner edge of BMW's scale numerals without obscuring them, paired with the frameless digital speed overlay.
-  2. **`Center Small Map (native)`**: Unhosts to slot `0x100` behind BMW's native dials and automatically hides Cockpit+'s redrawn speed and right-wing widget so BMW's native speedometer digits and stock right BC view remain unobstructed. If ignition standby locks `0x100` during active navigation, `OverlayRenderer` rescues the map onto `panel 0x203` (`mask_mode=2`) with `waze-on-cluster` `idle_ms=600000` keep-alive.
-- **Outer Vitals Preservation**: Switching `clusterSlotMode` to **Outer Vitals Only (`map_only`)** keeps coolant/oil, 12V, HV SoC, brake rail, `D1–D8`, cabin temp, and below-speed telemetry in their original outer `0x203` positions (never squeezing into `0x100`) while restoring the stock right BC widget.
+- **Two KOMBI4 Map Modes** (`68 / 96 (default) / 130 px` feather width in FullView):
+  1. **`FullView Map (fullview_dials`, default)**: Extends the hosted map vertically across `y=0..668` while `cluster-render 2.9.4` evaluates a C1-continuous analytic SDF derived from the same homography-calibrated KOMBI4 outer bezel contour (`WING_TOP_Y` / `WING_OUTER_X` / `WING_BOTTOM_Y`) used by the media album-art backdrop, softly feathering over the inner numeral edges (`340..30`, `7..1`, limit sign, `1/min x1000`), paired with all `0x203` outer vitals (including non-overlapping Metric `cabin_temp` at `x=1712` ICE / `x=1170` PHEV), 5AU turn card, raised ETA pill, frameless speed, and BC right-wing widget.
+  2. **`Center Small Map (native)`**: Completely releases `panel 0x203` and unhosts back to `slot 0x100` during normal driving (disabling software right card & `0x203` overlays) so BMW's **genuine stock right-wing BC card (`slot 0x200`)** and stock speed/gauges work 100% natively while HUD (`0x323`) keeps running. When the engine is OFF during routing (`0x100` locked), `panel 0x203` (`mask_mode=3`, without software right card) temporarily keeps the center map alive, then automatically releases `0x203` as soon as the engine restarts.
+- **Outer Vitals Preservation**: Switching `clusterSlotMode` to **Outer Vitals Only (`map_only`)** keeps coolant/oil, 12V, HV SoC, brake rail, `D1–D8`, cabin temp, and below-speed telemetry in their original outer `0x203` positions while hiding the right widget and fullview host.
 - **Apple Maps Pure Map-Only Route Fix**: Uses `--safe 840x570+396+40` (`280×190 pt @3x`) and `maps:/car/instrumentcluster/map` (`itemType 1`) so active Apple Maps routes stay rendered without duplicate grey turn cards.
 - **Calibrated KOMBI4 Panel (`0x203`) & HUD (`0x323`) Widgets**:
-  - **Navigation Overlays**: Top-center **iOS turn card** in the `5AU` pocket (`760, 18, 400x96`, `200m–800m` or always-on, with highway exit shield) + bottom **ETA capsule** (relying on KOMBI4's native cluster lane bar while retaining full **6-lane vector guidance on HUD**).
+  - **Navigation Overlays**: Top-center **iOS turn card** in the `5AU` pocket (`760, 18, 400x96`, `200m–800m` or always-on, with highway exit shield) + raised bottom **ETA capsule** (`760, 628, 400x46`, clear of `Total km`).
   - **Powertrain, Media & Alerts**: Frameless **digital speed** + per-line **efficiency/RPM/boost** vitals, **BC-cyclable right-wing widget** (album art media, trip/powertrain, 4-wheel TPMS & smart anomaly alerts, PHEV charging finish prognosis), `D1–D8` gear strictly clear of `GEAR_WIN (1380..1460)`, HVAC-colored cabin temp, read-only DSC brake rail, and 12V/HV SoC.
   - **HUD (`0x323`) & Position Studio**: CJK street + green highway exit banner, lead-car headway (`1.8s / dist / delta`), 3-line vitals, vector HUD navigation that auto-yields on OEM intersection mini-maps, plus an in-car **Widget Position Studio (`2 / 10 / 30 px` free X/Y adjustment)**.
 
@@ -109,12 +109,12 @@ npm run bench
 
 | Component | Kind | Version | Purpose |
 | :--- | :--- | :--- | :--- |
-| **`cluster-render`** | Tool | `2.9.2` | Shared RAMSES 19 + Dcsm2 cluster/HUD compositor with `1632x720`, `host_layers`, and calibrated video-shader `host_mask` cutouts |
-| **`waze-on-cluster`** | Tool | `2.9.1` | FullView CarPlay / AA H.264 decoder (`1632x720`, `--safe 840x570+396+40`, `idle_ms=600000` standby keep-alive) + HUD projection |
+| **`cluster-render`** | Tool | `2.9.4` | Shared RAMSES 19 + Dcsm2 cluster/HUD compositor with `1632x720`, `host_layers`, and calibrated KOMBI4 bezel SDF `mask_mode=1/3` cutouts |
+| **`waze-on-cluster`** | Tool | `2.9.2` | FullView CarPlay / AA H.264 decoder (`1632x720`, `--safe 840x570+396+40`, `idle_ms=600000` standby keep-alive) + HUD projection |
 | **`robertn_waze_cluster`** | App | `0.6.17` | *Maps on Cluster* iDrive UI (updated to recognize `1632x720` FullView patching) |
 | **`mgu-render`** | Tool *(optional)* | `0.6.26` | 60 fps OpenGL ES 2 GPU renderer daemon (from `robertnisipeanu/mgu-store`) |
 | **`cockpit-fullview`** | Tool | `1.0.0` | Reversibly repairs conflicting `cluster-render.local.conf` overrides and disables overlapping native C++ pods |
-| **`id7_cockpit_plus`** | App | `0.9.10` | **Cockpit+**: 2 calibrated map modes, 5AU top turn card (no duplicate cluster lanes), native-mode stock preservation, engine-off standby map persistence, HUD nav & Position Studio |
+| **`id7_cockpit_plus`** | App | `0.9.13` | **Cockpit+**: calibrated KOMBI4 bezel SDF FullView (`mask_mode=1`), Center Small Map releasing `0x203` for genuine stock `0x200` BC card + engine-off standby rescue (`mask_mode=3`), non-overlapping Metric cabin temp, 5AU top turn card, raised ETA pill, HUD nav & Position Studio |
 
 ### Install via MGU Store (Releases Feed)
 
