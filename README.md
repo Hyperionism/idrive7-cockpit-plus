@@ -1,5 +1,8 @@
+<img src="apps/id7_cockpit_plus/icon.png" width="76" align="right" alt="Cockpit+">
+
 # Cockpit+ for BMW iDrive 7 (`id7_cockpit_plus`)
 
+**BMW iDrive 7 (MGU / KOMBI4 液晶仪表 + HUD 抬头显示) 全屏导航与数字驾驶舱套件**  
 [简体中文](#简体中文) | [English](#english)
 
 ---
@@ -8,60 +11,66 @@
 
 ## 简体中文
 
-> [!WARNING]
-> **尚未经过实车测试**：本项目目前仅通过自动化单元测试、`hu-stub.js` 车机运行桩与桌面模拟器验证，**尚未在真实 BMW iDrive 7 实车 / 实体 MGU 车机上进行完整实测**。在车机上安装或调试前请自行做好原有配置备份，切勿卸载 `mgu-store` 与 `mgu-deploy` 等基础组件。
+> [!NOTE]
+> **实车验证状态**：核心 `FullView 1632px` 地图投屏（高德地图、Apple Maps 全程路线与纯地图去重补丁）、5AU 车道引导、居中转向卡、ETA 胶囊、右侧媒体卡片及简体中文菜单已在 **BMW G20（iDrive 7 `MGU P18_23w44.2-1-3` + KOMBI4 仪表 + CarPlay）** 上实测跑通；`v0.9.8` 进一步加入 **DstOut 透明切角遮罩**、**原生居中模式真零遮挡修复** 与 **全新识别图标**。在车机安装/调试前请做好配置备份，切勿卸载 `mgu-store` 与 `mgu-deploy` 等基础组件。
 
-**Cockpit+** 是一套完全开源的 **BMW iDrive 7（MGU / KOMBI4 液晶仪表 + HUD 抬头显示）** 全屏导航与数字驾驶舱套件。
+![Cockpit+ 全屏仪表驾驶舱全景示意](docs/cockpit-overview.png)
 
-只需在车机 **MGU Store** 中添加单一开源仓库源 `Hyperionism/idrive7-cockpit-plus`，即可一站式获取 `1632x720` 全屏 CarPlay / Android Auto 地图投屏所需的全部开源底层组件，以及与原生仪表布局深度融合的简体中文数字仪表 / HUD 增强界面。
+**Cockpit+** 是一套完全开源、只读 UDS 采集的 BMW iDrive 7 座舱增强套件。在车机 **MGU Store** 中添加单一开源软件源 `Hyperionism/idrive7-cockpit-plus`，即可一站式安装 `1632px` FullView CarPlay / Android Auto 投屏组件与原生简体中文（`zh-CN`）仪表/HUD 增强界面。
 
-### 组件构成
+### 核心功能一览
+
+- **三种零遮挡地图显示模式**（支持高德地图 / 百度地图 / Apple Maps / Google Maps / Waze）：
+  1. **`全屏地图 · 保留原厂双表盘 (fullview_dials`，默认)**：通过 `0x203` 将地图延展至仪表顶部边缘（`y=0..616`），并用 **`DstOut` 混合模式**将左右双表盘区域擦成透明，**既全高显示大地图，又完整保留原厂时速/转速双环、指针与油量/水温表**。
+  2. **`全屏地图 · 宽幅沉浸 1632px (fullview)`**：奥迪式超宽视野铺满中央区域，配合超椭圆透明弧形切角避让油量、水温与底栏，居中车速与右侧卡片直接浮显于地图上。
+  3. **`原生居中地图 1088×480 (native)`**：自动调用 `unhost` 退回硬件后层通道 `0x100`，位于原厂表盘之后 100% 零遮挡，同时照常保留全部外圈数据与 HUD 增强。
+- **Apple Maps 实车专项优化**：通过 `--safe 840x570+396+40`（`280×190 pt @3x`）与纯地图模式 `maps:/car/instrumentcluster/map`（`itemType 1`），开始路线导航时稳定显示全程路径且不弹出苹果自带重复灰底卡片。
+- **驾驶舱核心小组件（`panel 0x203`，严格避让 `GEAR_WIN 1380..1460` 安全区）**：
+  - ① **5AU 顶部居中车道引导条**（`lane_guidance`）：支持 CarPlay / 高德 / 百度双层实时车道与推荐箭头。
+  - ② **居中 iOS 转向提示卡**（`guidance_turn_card`）：支持路名与绿色高速出口徽标，触发距离可在菜单设置 `200m / 350m / 500m / 800m / 导航全程常显`。
+  - ③ **居中无框数字车速 + 工况双行**（`speed` + `below_speed`）：支持油耗 / 电耗、实时功率 / 转速 / 涡轮增压值，每行可独立关闭或切换无框/半透明底板。
+  - ④ **右侧多功能卡片（方向盘 BC 键循环切换）**（`right_widget`）：高清专辑封面媒体卡、行程与动力总成、四轮飞梭胎压胎温与智能异常警报、插混充电完成时间预估。
+  - ⑤ **底部 ETA 到达胶囊**（`eta_pill`）：实时预计到达时间、剩余时间与剩余里程，未导航时自动隐藏。
+  - ⑥⑦⑧ **外圈车况与底栏读数**：左下角发动机机油温度（冷机蓝字预警）与冷却液/波箱油温；档位 `D1–D8` 紧贴原车 `D` 旁且严格保证 `x ≥ 1461`；车内温度（随制冷/制热自动变色）；只读 DSC 液压刹车力度条/插混回充条；右下角 12V 电瓶 `% / 电压` 与混动 HV 电量显示。
+- **HUD 抬头显示增强（`0x323`）与自由坐标微调工作室**：
+  - 顶部通栏路名与高速出口绿牌、3 行只读车况、前车车距与相对速度、右侧矢量转向箭头与 6 车道引导（原车路口放大图弹出时自动避让 `y ≥ 202` ACC 区）。
+  - 车机内设 **9 个清晰分类菜单**，内置 **组件自由位置微调工作室（`LAYOUT_POS`）**：可选 `2 / 10 / 30 px` 步长，对转向卡、车道条、ETA 胶囊、数字车速、外圈读数与 HUD 自由调 X/Y 坐标。
+
+![Cockpit+ 三种地图模式与 HUD 抬头显示布局](docs/map-modes-hud.png)
+
+### 套件组件与版本
 
 | 组件名 | 类型 | 版本 | 说明 |
 | :--- | :--- | :--- | :--- |
-| **`cluster-render`** | 工具 | `0.8.14` | 共享 RAMSES 19 + Dcsm2 仪表与 HUD 合成器，已解锁 `1632x720` 地图纹理尺寸上限（基于 `robertnisipeanu/idrive-apps`，MPL-2.0 / GPL-3.0） |
-| **`waze-on-cluster`** | 工具 | `0.14.16` | FullView 全屏 H.264 CarPlay / Android Auto 地图解码器（`tex_size = 1632x720`、`hosted_vpp_scale = 0`、`--res 1632x720`）并支持 HUD 投影（GPL-3.0） |
-| **`robertn_waze_cluster`** | 应用 | `0.6.16` | *Maps on Cluster* 车机控制界面，用于在 iDrive 内开启 / 校验内存地图投屏补丁、开关 HUD 地图与查看日志（GPL-3.0） |
-| **`mgu-render`** | 工具 *（可选）* | `0.6.26` | 60 fps OpenGL ES 2 GPU 渲染守护进程（源自 `robertnisipeanu/mgu-store`），供其他 GPU 绘制应用使用 |
-| **`cockpit-fullview`** | 工具 | `1.0.0` | 当存在旧版自定义配置冲突时，自动可逆地修复 `cluster-render.local.conf` 中的 `panel_scene_id` / `panel_slot` 并禁用重叠的原生 C++ 浮窗；纯开源环境安装时自动跳过 |
-| **`id7_cockpit_plus`** | 应用 | `0.9.4` | **Cockpit+ 主程序**：提供原生简体中文（`zh-CN`）iDrive 设置与诊断菜单，在 `panel`（`0x203`）上以 `1632x720` 托管全屏实时地图与弧形表圈遮罩，并叠加 5AU 车道引导、居中转向卡、ETA 胶囊、无框车速、左侧工况数据、右侧 BC 卡片及 HUD 中文导航 |
-
-### 视觉层级与防遮挡设计
-
-当 `Cockpit+` 运行在 `panel` 图层（槽位 `0x203`，`1920x720`，渲染优先级位于原车表圈、指针与底部信息栏之后）：
-
-1. **托管 FullView 全屏地图层（`z = 0`，`144,0`，`1632x720`）**：通过 `cluster-render` 的 `host` 接口将 `waze-on-cluster` 解码的 CarPlay / Android Auto / 高德 / 百度 / Apple 地图视频流直接嵌入中心仪表区域，所有 `Cockpit+` 控件均位于地图之上。
-2. **KOMBI4 弧形表圈渐变遮罩（`z = 2`）**：内置 GLSL ES 1.00 `bezel_mask` 着色器对仪表四角弧形表圈边缘进行平滑羽化过渡（`shape_top = 374x354`，`shape_bottom = 408x168`），避免直角硬边裁切，无需上传额外大尺寸位图。
-3. **Cockpit+ 仪表叠加控件（`z = 11..15`）**：
-   - **顶部居中**：**5AU 车道引导条**（`lane_guidance`）
-   - **居中上部**：**iOS 风格转向提示卡**（`guidance_turn_card`，临近路口自动弹出，触发距离可在菜单设为 `200m / 350m / 500m / 800m / 常显`，默认 `350 m`）
-   - **底部居中**：**预计到达 ETA 胶囊**（`eta_pill`，未导航时自动隐藏）
-   - **居中车速**：**无框数字车速**（`speed`，黑色描边清晰防遮挡）
-   - **车速下方工况**：实时能耗 / 功率 / 转速 / 涡轮压力（`below_speed`）
-   - **右侧表盘卡片**：已校准几何位置的 **媒体专辑封面与进度 / 行程与动力总成 / 胎压胎温与异常警报 / 插混充电完成时间**（`right_widget`），通过左侧拨杆 **BC 键** 循环切换
-   - **左下 / 右下角标**：机油 / 水温 / 变速箱油温（`corner_left`）、12V 电瓶 / 高压电池 / 进气温度（`corner_right`）与只读制动 / 回充状态条（`brake_rail`）
-4. **HUD 抬头显示（`0x323`）**：支持中文道路名称与高速出口绿牌显示、放大版转向矢量与 6 车道引导、前车车距与 3 行紧凑车况数据，并在原车路口放大图弹出时自动避让。
+| **`cluster-render`** | 工具 | `2.9.0` | RAMSES 19 + Dcsm2 仪表与 HUD 合成器，支持 `1632x720`、`host_layers` 与 Porter-Duff `render_state`（基于 `robertnisipeanu/idrive-apps`） |
+| **`waze-on-cluster`** | 工具 | `2.9.0` | FullView 全屏 CarPlay / AA 地图解码器（`1632x720`、`--safe 840x570+396+40`、Apple Maps 纯地图 `itemType 1`）与 HUD 投影 |
+| **`robertn_waze_cluster`** | 应用 | `0.6.17` | *Maps on cluster* 车机控制界面（已适配识别 `1632x720` 全屏补丁状态） |
+| **`mgu-render`** | 工具 *（可选）* | `0.6.26` | OpenGL ES 2 GPU 渲染守护进程（源自 `robertnisipeanu/mgu-store`） |
+| **`cockpit-fullview`** | 工具 | `1.0.0` | 自动可逆修复旧版 `cluster-render.local.conf` 槽位冲突并禁用重叠原生 C++ 浮窗 |
+| **`id7_cockpit_plus`** | 应用 | `0.9.8` | **Cockpit+ 主程序**：中文菜单、3 种零遮挡全屏/原生地图模式、透明 `DstOut` 切角、全套仪表与 HUD 控件及自由坐标微调 |
 
 ### 通过 MGU Store 安装（Releases 源）
 
-1. 让车机连接手机热点或 Wi-Fi，在车机中打开 **MGU Store → Sources（软件源）**。
-2. 选择 **Releases** 类型并添加仓库地址：
+1. 让车机连接手机热点或 Wi-Fi，打开车机 **MGU Store → Sources（软件源）**。
+2. 选择 **Releases** 类型添加仓库源：
    ```text
    Hyperionism/idrive7-cockpit-plus
    ```
-3. 刷新列表后安装 **`Cockpit+ 驾驶舱增强`（`id7_cockpit_plus`）**，商店会自动按依赖安装 `cluster-render`、`waze-on-cluster` 与 `cockpit-fullview`。
-4. 再安装 **`Maps on cluster`（`robertn_waze_cluster`）** 以在 iDrive 菜单内启用 CarPlay / Android Auto 投屏补丁（如需运行其他 OpenGL ES 2 应用可一并安装 `mgu-render`）。
-5. 长按中控音量旋钮约 30 秒重启一次 iDrive 后即可进入设置与诊断界面查看连接状态。
+3. 刷新后安装 **`Cockpit+ 驾驶舱增强`（`id7_cockpit_plus`）**，商店会自动按依赖安装 `cluster-render`、`waze-on-cluster` 与 `cockpit-fullview`。
+4. 再安装 **`Maps on cluster`（`robertn_waze_cluster`）** 以管理 CarPlay / Android Auto 投屏补丁。
+5. 长按中控音量旋钮约 30 秒重启一次 iDrive 即可生效。
 
-> **重要提示**：如果车机此前安装过其他版本的仪表叠加插件，请先在 MGU Store 中卸载旧版插件后再安装本套件，并**务必保留 `mgu-store` 和 `mgu-deploy` 不要卸载**。
+> [!IMPORTANT]
+> - 切勿卸载 **`mgu-store`** 和 **`mgu-deploy`**。
+> - 如果此前曾通过第三方安装包/其他源安装过 `cluster-render`，请在 MGU Store 的 **Sources** 中**暂时仅保留 `Hyperionism/idrive7-cockpit-plus` 一个包含 `cluster-render` 的软件源**再点击安装/更新，即可平滑升级至 `2.9.0`。
 
 ### 本地构建、测试与桌面模拟器
 
 ```sh
-# 1. 使用 stub-SDK 构建简体中文版安装包（用于本地测试）
+# 1. 使用 stub-SDK 构建简体中文安装包
 python3 vendor/cauliflowermossgrape-idrive7-apps/kit/tools/build.py --app-root . --language zh-CN --stub-sdk id7_cockpit_plus
 
-# 2. 运行全部单元测试（核心 29 项 + 伴侣工具/中文包/Schema 2 目录 8 项）
+# 2. 运行全部单元测试（核心 30 项 + 伴侣工具/中文包/Schema 2 目录 9 项）
 REQUIRE_DIST=1 node test/run_tests.js
 node test/fullview_companion_test.js
 
@@ -75,54 +84,49 @@ npm run bench
 
 ## English
 
-> [!WARNING]
-> **NOT YET TESTED ON A REAL VEHICLE**: This project has only been verified using automated unit tests, the `hu-stub.js` head-unit stub runtime, and the desktop bench simulator. **It has NOT yet been tested on a physical BMW iDrive 7 vehicle / MGU head unit.** Back up existing configurations before installing, proceed at your own risk, and **never uninstall `mgu-store` or `mgu-deploy`**.
+> [!NOTE]
+> **Real-Vehicle Verified Base + New v0.9.8 Features**: Core `1632px` FullView CarPlay projection (AMAP & Apple Maps full-route with pure map-only `itemType 1`), 5AU lanes, centered turn card, ETA pill, right-wing media widget, and `zh-CN` UI have been verified on a physical **BMW G20 (iDrive 7 `MGU P18_23w44.2-1-3`, KOMBI4, CarPlay)**. `v0.9.8` adds **Porter-Duff `DstOut` alpha-erasing dial/bezel cutouts**, **true behind-dial native `0x100` unhost mode**, and a **custom BMW-style Cockpit+ tile icon**. Always back up configs and never uninstall `mgu-store` or `mgu-deploy`.
 
-**Cockpit+** is a complete open-source **BMW iDrive 7 (MGU / KOMBI4 Instrument Cluster + HUD)** full-screen navigation and digital cockpit suite designed for **MGU Store (Releases feed)**.
+![Cockpit+ KOMBI4 Overview Diagram](docs/cockpit-overview.png)
 
-Adding **`Hyperionism/idrive7-cockpit-plus`** as a single Releases source provides all open-source runtimes needed for `1632x720` FullView CarPlay / Android Auto map projection alongside Simplified Chinese (`zh-CN`) iDrive menus, CJK road-name rendering, and calibrated cluster / HUD telemetry overlays.
+**Cockpit+** is an open-source, read-only UDS **BMW iDrive 7 (MGU / KOMBI4 + HUD)** FullView navigation and digital cockpit suite built for **MGU Store (Releases feed)**. Adding **`Hyperionism/idrive7-cockpit-plus`** provides every component needed for `1632px` CarPlay / Android Auto cluster projection together with calibrated cluster & HUD telemetry widgets.
+
+### Key Features
+
+- **Three Zero-Occlusion Cluster Map Modes**:
+  1. **`FullView + Native Dials (fullview_dials`, default)**: Extends the hosted map to the top edge of `0x203` (`y=0..616`) while using a **`DstOut` alpha-erasing shader** (`zero / one_minus_src_alpha`) so BMW's native blue speedometer & tachometer rings, needles, and fuel/coolant gauges show cleanly through without opaque black blobs.
+  2. **`FullView Wide 1632px (fullview)`**: Full-width Audi-style cockpit projection across `1632x616`, paired with a smooth superellipse `DstOut` bezel cutout that clears the fuel/coolant sub-gauges and bottom status bar.
+  3. **`Native Center 1088x480 (native)`**: Calls `cr.unhost('map')` to return the map to hardware slot `0x100` **behind** BMW's stock dials for 100% zero dial occlusion while retaining all outer Cockpit+ and HUD overlays.
+- **Apple Maps Pure Map-Only Route Fix**: Uses `--safe 840x570+396+40` (`280×190 pt @3x`) and `maps:/car/instrumentcluster/map` (`itemType 1`) so active Apple Maps routes stay rendered without duplicate grey turn cards.
+- **Calibrated KOMBI4 Panel (`0x203`) & HUD (`0x323`) Widgets**:
+  - **Navigation Overlays**: Dual-row **5AU lane guidance**, **iOS turn card** (`200m–800m` or always-on, with highway exit shield), and bottom **ETA capsule**.
+  - **Powertrain, Media & Alerts**: Frameless **digital speed** + per-line **efficiency/RPM/boost** vitals, **BC-cyclable right-wing widget** (album art media, trip/powertrain, 4-wheel TPMS & smart anomaly alerts, PHEV charging finish prognosis), `D1–D8` gear strictly clear of `GEAR_WIN (1380..1460)`, HVAC-colored cabin temp, read-only DSC brake rail, and 12V/HV SoC.
+  - **HUD (`0x323`) & Position Studio**: CJK street + green highway exit banner, lead-car headway (`1.8s / dist / delta`), 3-line vitals, vector HUD navigation that auto-yields on OEM intersection mini-maps, plus an in-car **Widget Position Studio (`2 / 10 / 30 px` free X/Y adjustment)**.
+
+![Cockpit+ Three Map Modes and HUD Layout](docs/map-modes-hud.png)
 
 ### Components
 
 | Component | Kind | Version | Purpose |
 | :--- | :--- | :--- | :--- |
-| **`cluster-render`** | Tool | `0.8.14` | Shared RAMSES 19 + Dcsm2 cluster & HUD compositor with unlocked `1632x720` map texture ceiling (from `robertnisipeanu/idrive-apps`, MPL-2.0 / GPL-3.0) |
-| **`waze-on-cluster`** | Tool | `0.14.16` | FullView CarPlay / Android Auto H.264 decoder (`tex_size = 1632x720`, `hosted_vpp_scale = 0`, `--res 1632x720`) + HUD map projection (GPL-3.0) |
-| **`robertn_waze_cluster`** | App | `0.6.16` | *Maps on Cluster* iDrive control UI to arm/verify in-memory CarPlay / AA patching, toggle HUD map, and inspect logs (GPL-3.0) |
-| **`mgu-render`** | Tool *(optional)* | `0.6.26` | 60 fps OpenGL ES 2 GPU renderer daemon (from `robertnisipeanu/mgu-store`) for GPU-rendered MGU apps |
-| **`cockpit-fullview`** | Tool | `1.0.0` | Reversibly repairs conflicting `panel_scene_id` / `panel_slot` overrides in `cluster-render.local.conf` and disables overlapping C++ pods when legacy profiles exist; no-ops cleanly on fresh open-source setups |
-| **`id7_cockpit_plus`** | App | `0.9.4` | **Cockpit+**: auto-hosts the live `1632x720` CarPlay/AA map on `panel` (`0x203`) with curved KOMBI4 bezel masking underneath 5AU lanes, centered 350 m iOS turn card, ETA capsule, digital speed, left vitals, BC-cyclable right wing widget, and CJK-capable HUD nav (`zh-CN` default release build) |
-
-### Visual Layout & Zero-Overlap Hosting
-
-When `Cockpit+` renders on `panel` (`0x203`, `1920x720`, composited behind BMW's OEM dial rings, needles, and bottom bar):
-
-1. **Hosted FullView Video Layer (`z = 0`, `144,0`, `1632x720`)**: Uses `cluster-render`'s `host` API to place `waze-on-cluster`'s live H.264 stream (Apple Maps, Google Maps, AMAP, Baidu Maps, Waze) directly inside the central cluster area underneath `Cockpit+`'s overlays.
-2. **KOMBI4 Bezel Corner Fade (`z = 2`)**: Lightweight GLSL ES 1.00 `bezel_mask` fragment shader smoothly feathers the four inner dial corners (`shape_top = 374x354`, `shape_bottom = 408x168`) without uploading extra bitmap assets.
-3. **Cockpit+ Overlay Zones (`z = 11..15`)**:
-   - **Top Center**: **5AU Lane Guidance** (`lane_guidance`)
-   - **Center**: **iOS Turn Card** (`guidance_turn_card`, auto-triggers near maneuvers at configurable distance `200m / 350m / 500m / 800m / Always`, default `350 m`)
-   - **Bottom Center**: **ETA Capsule** (`eta_pill`, hidden automatically when no route is active)
-   - **Center Speed**: **Frameless Digital Speed** (`speed`)
-   - **Left Vitals**: Engine, boost, efficiency, and powertrain vitals (`below_speed`)
-   - **Right Wing Widget**: Calibrated **Media Artwork / Trip & Powertrain / TPMS & Smart Alerts / PHEV Charging Finish** widget (`right_widget`), cycled via the steering-column **BC** button
-   - **Bottom Corners & Brake Rail**: Read-only temperatures, 12V / HV SoC, and friction-brake / ICE-charge indicator
-4. **HUD (`0x323`)**: Bold maneuver vector arrow + 6-lane guidance, CJK-capable road & green highway exit banner, lead-car headway badge, compact 3-line telemetry, and automatic yield when BMW's native intersection mini-map appears.
+| **`cluster-render`** | Tool | `2.9.0` | Shared RAMSES 19 + Dcsm2 cluster/HUD compositor with `1632x720`, `host_layers`, and Porter-Duff `render_state` |
+| **`waze-on-cluster`** | Tool | `2.9.0` | FullView CarPlay / AA H.264 decoder (`1632x720`, `--safe 840x570+396+40`, Apple Maps `itemType 1`) + HUD projection |
+| **`robertn_waze_cluster`** | App | `0.6.17` | *Maps on Cluster* iDrive UI (updated to recognize `1632x720` FullView patching) |
+| **`mgu-render`** | Tool *(optional)* | `0.6.26` | 60 fps OpenGL ES 2 GPU renderer daemon (from `robertnisipeanu/mgu-store`) |
+| **`cockpit-fullview`** | Tool | `1.0.0` | Reversibly repairs conflicting `cluster-render.local.conf` overrides and disables overlapping native C++ pods |
+| **`id7_cockpit_plus`** | App | `0.9.8` | **Cockpit+**: 3 map modes with `DstOut` transparent cutouts, 5AU lanes, turn card, ETA pill, right-wing widgets, HUD nav & Position Studio |
 
 ### Install via MGU Store (Releases Feed)
 
-1. Connect the head unit to a phone hotspot or Wi-Fi and open **MGU Store → Sources**.
+1. Connect the head unit to Wi-Fi / hotspot and open **MGU Store → Sources**.
 2. Add a **Releases** source:
    ```text
    Hyperionism/idrive7-cockpit-plus
    ```
-3. Install **`Cockpit+` (`id7_cockpit_plus`)** — MGU Store automatically resolves `cluster-render`, `waze-on-cluster`, and `cockpit-fullview`.
-4. Install **`Maps on cluster` (`robertn_waze_cluster`)** to arm/check CarPlay & Android Auto patching from the iDrive menu (and optionally `mgu-render` for OpenGL ES 2 apps).
-5. Reboot iDrive once (hold the volume knob for ~30 seconds).
+3. Install **`Cockpit+` (`id7_cockpit_plus`)** (auto-resolves `cluster-render`, `waze-on-cluster`, and `cockpit-fullview`) and **`Maps on cluster` (`robertn_waze_cluster`)**.
+4. Reboot iDrive once (hold the volume knob for ~30 seconds).
 
-> **Note**: If migrating from other third-party cluster overlays, uninstall the previous overlay components first while keeping **`mgu-store`** and **`mgu-deploy`** installed.
-
-### Local Verification & Simulator Bench
+### Local Build & Test
 
 ```sh
 python3 vendor/cauliflowermossgrape-idrive7-apps/kit/tools/build.py --app-root . --language zh-CN --stub-sdk id7_cockpit_plus
