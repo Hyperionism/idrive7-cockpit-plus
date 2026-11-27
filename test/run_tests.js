@@ -710,7 +710,7 @@ function inBox(x, y, box) {
         await wait(60);
 
         assert.strictEqual(recorded.layers.filter((l) => l.target === 'panel' && (!l.kind || l.kind === 'image')).length, 8, 'default PHEV panel_only must activate 5 outer zones + hv_soc_gauge + right_widget + speed');
-        assert.strictEqual(recorded.layers.some((l) => l.target === 'panel' && l.kind === 'effect' && l.z === 2), true, 'FullView bezel fade effect layer activates on panel');
+        assert.strictEqual(recorded.layers.some((l) => l.target === 'panel' && l.kind === 'effect' && l.z === 2), false, 'FullView bezel fade effect must stay OFF by default / when map hosting is not live');
         assert(rDefault.layerCount() <= 16);
         assert(rDefault.pixelBytesTotal() < 3.5 * 1024 * 1024);
 
@@ -3094,10 +3094,13 @@ function inBox(x, y, box) {
         // 2. Feed maneuver at 600m -> still > 350m threshold -> turn card stays hidden
         nt.feedEvents({
             GuidanceEventListError: 'NO_ERROR',
-            viewContent: [{ eventsInView: [{ intersection: { turnDirection: 'LEFT', formattedDistance: { distance: '600', unit: 'METER' }, description: { elements: [{ text: '\u4e2d\u5c71\u4e1c\u4e00\u8def' }] } } }] }],
+            viewContent: [{ eventsInView: [{ intersection: { direction: 'LEFT', formattedDistance: { distance: '600', unit: 'METER' }, description: { elements: [{ text: '\u4e2d\u5c71\u4e1c\u4e00\u8def' }] } } }] }],
         }, 1500, 1480);
         nt.feedField('guidance', 'nextIntersection', { distance: { distance: '600', unit: 'METER' } }, 1500);
         model.telemetry.hudNav = nt.snapshot(wallNow + 300, 1550, 480);
+        assert.strictEqual(model.telemetry.hudNav.guide, 'CAR_PLAY');
+        assert.strictEqual(model.telemetry.hudNav.show.dir, 'LEFT');
+        assert.strictEqual(model.telemetry.hudNav.show.road, '\u4e2d\u5c71\u4e1c\u4e00\u8def');
         r.render(model, settings, 1550);
         assert(!r.layers.guidance_turn_card || !r.layers.guidance_turn_card.visible, 'turn card at 600m must not appear before 350m trigger');
 
@@ -3112,6 +3115,15 @@ function inBox(x, y, box) {
         assert.strictEqual(tc.rect.y, 110);
         assert(tc.rect.x + tc.rect.w + 80 <= rw.rect.x, 'turn card must leave >=80px gap left of right_widget (x=1244)');
         assert(countOpaque(tc.cv) > 300, 'turn card must draw vector arrow + distance + CJK street name');
+        // Verify real maneuver arrow + live distance ('220 m') rendered rather than fallback dot/'--'
+        let brightTextPx = 0;
+        for (let py = 20; py < 62; py++) {
+            for (let px = 104; px < 260; px++) {
+                const o = (py * tc.cv.w + px) * 4;
+                if (tc.cv.d[o + 3] > 200 && tc.cv.d[o] > 180) brightTextPx++;
+            }
+        }
+        assert(brightTextPx > 120, 'turn card must render bright distance digits (not "--"), got px=' + brightTextPx);
 
         // 4. Hysteresis (2.5s hold) and clean hide on route cancel (never stuck on '--:--'!)
         nt.feedField('guidance', 'nextIntersection', { distance: { distance: '520', unit: 'METER' } }, 2400);

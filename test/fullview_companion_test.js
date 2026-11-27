@@ -239,11 +239,11 @@ function testOverlayRendererFullviewMapHost() {
   const builtJsDir = path.join(ROOT, 'dist', 'id7_cockpit_plus', 'source', 'javascript');
   assert.ok(fs.existsSync(path.join(builtJsDir, 'overlay_renderer.js')), 'run build.py --stub-sdk before fullview_companion_test.js');
   const { OverlayRenderer } = require(path.join(builtJsDir, 'overlay_renderer.js'));
-  const { resolveUnits } = require(path.join(builtJsDir, 'units.js'));
+  const { resolveUnits, decodeCarUnits } = require(path.join(builtJsDir, 'units.js'));
 
   const calls = { hosts: [], unhosts: [], effects: [], sets: [], uniforms: [] };
   class StubCR extends EventEmitter {
-    constructor() { super(); this._next = 1; this.targets = 'map:1088x480,panel:1920x720,hud:800x480'; }
+    constructor() { super(); this._next = 1; this.targets = 'map:1088x480,panel:1920x720,hud:800x480'; this.hostLayers = true; }
     connect() { process.nextTick(() => this.emit('ready')); }
     close() {}
     image() { return this._next++; }
@@ -261,29 +261,50 @@ function testOverlayRendererFullviewMapHost() {
   const profile = { kind: 'ice', isPhev: false, isCold: false };
   const model = { units, profile, telemetry: { speedKmh: 62, gear: 3 }, efficiency: {} };
 
+  // 1. Before map hosting becomes live, bezelMask MUST stay hidden (never black out unhosted factory gauges!)
   r.render(model, { enabled: true, clusterSlotMode: 'panel_only', mapHostMode: 'fullview', mapBezelMask: true }, 1000);
   assert.strictEqual(calls.hosts.length, 1);
   assert.strictEqual(calls.hosts[0].into, 'panel');
-  assert.deepStrictEqual(calls.hosts[0].opts, { target: 'map', x: 144, y: 0, w: 1632, h: 720, shown: 1 });
+  assert.deepStrictEqual(calls.hosts[0].opts, {
+    target: 'map', x: 144, y: 0, w: 1632, h: 616, src_x: 0, src_y: 0, src_w: 1088, src_h: 410, shown: 1
+  });
+  assert.ok(calls.hosts[0].opts.y + calls.hosts[0].opts.h < 648, 'FullView host rect must stay strictly above KOMBI4 GEAR_WIN (y>=648)');
+  assert.strictEqual(calls.effects.length, 0, 'bezelMask must NOT be created while map hosting is not live');
+
+  // 2. Once cluster-render confirms hosting is live, bezelMask activates ONLY over y=0..608 (never GEAR_WIN!)
+  r.cr.emit('hosting', 'map', { state: 'live' });
+  r.render(model, { enabled: true, clusterSlotMode: 'panel_only', mapHostMode: 'fullview', mapBezelMask: true }, 1020);
   assert.strictEqual(calls.effects.length, 1);
   assert.strictEqual(calls.effects[0].z, 2);
   assert.strictEqual(calls.effects[0].w, 1632);
-  assert.ok(calls.effects[0].fs.includes('816.0') && calls.effects[0].fs.includes('354.0') && calls.effects[0].fs.includes('408.0') && calls.effects[0].fs.includes('u_feather'), 'bezel shader must use split-ellipse SDF');
-  assert.deepStrictEqual(calls.uniforms[0], { ref: calls.effects[0].ref, name: 'u_feather', values: [168] });
+  assert.strictEqual(calls.effects[0].h, 608, 'bezelMask height must stay strictly <=608 (zero overlap with GEAR_WIN 648..720)');
+  assert.ok(calls.effects[0].fs.includes('816.0') && calls.effects[0].fs.includes('608.0') && calls.effects[0].fs.includes('u_feather') && !calls.effects[0].fs.includes('botFade'), 'bezel shader must stay clear of bottom bar & GEAR_WIN');
+  assert.deepStrictEqual(calls.uniforms[0], { ref: calls.effects[0].ref, name: 'u_feather', values: [54] });
 
   r.render(model, { enabled: true, clusterSlotMode: 'panel_only', mapHostMode: 'fullview', mapBezelMask: true, mapBezelFeather: 'tight' }, 1040);
-  assert.deepStrictEqual(calls.uniforms[1], { ref: calls.effects[0].ref, name: 'u_feather', values: [110] });
+  assert.deepStrictEqual(calls.uniforms[1], { ref: calls.effects[0].ref, name: 'u_feather', values: [36] });
 
   r.render(model, { enabled: true, clusterSlotMode: 'panel_only', mapHostMode: 'fullview', mapBezelMask: true, mapBezelFeather: 'wide' }, 1080);
-  assert.deepStrictEqual(calls.uniforms[2], { ref: calls.effects[0].ref, name: 'u_feather', values: [230] });
+  assert.deepStrictEqual(calls.uniforms[2], { ref: calls.effects[0].ref, name: 'u_feather', values: [80] });
+
+  // 3. Default mapBezelMask (omitted / false) hides bezelMask even while hosting is live
+  r.render(model, { enabled: true, clusterSlotMode: 'panel_only', mapHostMode: 'fullview' }, 1090);
+  assert.ok(calls.sets.some((s) => s.ref === calls.effects[0].ref && s.opts.visible === false), 'bezelMask must default to OFF');
 
   r.render(model, { enabled: true, clusterSlotMode: 'panel_only', mapHostMode: 'center', mapBezelMask: true }, 1100);
-  assert.strictEqual(calls.hosts.length, 4);
-  assert.deepStrictEqual(calls.hosts[3].opts, { target: 'map', x: 416, y: 120, w: 1088, h: 480, shown: 1 });
-  assert.ok(calls.sets.some((s) => s.ref === calls.effects[0].ref && s.opts.visible === false));
+  assert.deepStrictEqual(calls.hosts[calls.hosts.length - 1].opts, { target: 'map', x: 416, y: 120, w: 1088, h: 480, shown: 1 });
 
   r.render(model, { enabled: true, clusterSlotMode: 'panel_only', mapHostMode: 'off' }, 1200);
   assert.deepStrictEqual(calls.unhosts, ['map'], 'unhost must follow real ClusterRender.unhost(target) 1-arg signature');
+
+  // 4. Metric unit inference when car reports Celsius temperature without explicit distance enum
+  const partialMetric = decodeCarUnits({ unitOfMeasurementTemperature: 1 });
+  assert.strictEqual(partialMetric.tempUnit, 'C');
+  assert.strictEqual(partialMetric.distUnit, 'km', 'Celsius-only car signal must infer km distance unit');
+  assert.strictEqual(partialMetric.speedUnit, 'kmh', 'Celsius-only car signal must infer km/h speed unit');
+  const resolvedPartial = resolveUnits({ unitSystem: 'auto' }, partialMetric);
+  assert.strictEqual(resolvedPartial.speedUnit, 'kmh');
+  assert.strictEqual(resolvedPartial.distUnit, 'km');
   r.close();
 }
 
@@ -295,13 +316,14 @@ function testClusterWidgetPlateToggles() {
   const r = new OverlayRenderer({ allowPanel: true });
   const units = resolveUnits({ unitSystem: 'metric' }, {});
   const profile = { kind: 'ice', isPhev: false, isCold: false };
+  // Use real NavTracker.snapshot() shape: `guide` is the provider string ('CAR_PLAY'), `show` is the maneuver object!
   const routeHudNav = {
     routeActive: true,
     turnDistMeters: 180,
-    guide: { kind: 'turn', dir: 'RIGHT', dist: '180', unit: 'm', road: 'Test Road' },
+    guide: 'CAR_PLAY',
     lanes: { lanes: [{ follow: 'RIGHT', others: [], hi: true, info: 'NONE' }], markers: ['DASHED', 'DASHED'], rec: 0 },
     eta: { text: '14:20', remainSec: 600, remainMeters: 5400 },
-    show: { kind: 'turn', dir: 'RIGHT', dist: '180', unit: 'm', road: 'Test Road' }
+    show: { kind: 'turn', dir: 'RIGHT', dist: '180', unit: 'm', road: 'Test Road', src: 'events' }
   };
   const model = {
     units,
@@ -322,6 +344,7 @@ function testClusterWidgetPlateToggles() {
 
   // 1. Default plate configuration: speed frameless, nav widgets natural smoked glass (neutral RGB, zero blue border)
   r.render(model, { enabled: true, clusterSlotMode: 'panel_only' }, 2000);
+  assert.strictEqual(r.layers.guidance_turn_card.visible, true, 'turn card must read maneuver from hn.show when hn.guide is provider string');
   assert.strictEqual(pxAt(r.layers.speed.cv, 24, 10)[3], 0, 'speed default frameless body sample must be transparent');
   for (const name of ['lane_guidance', 'guidance_turn_card', 'eta_pill']) {
     const cv = r.layers[name].cv;
@@ -346,12 +369,22 @@ function testClusterWidgetPlateToggles() {
     assert.strictEqual(pxAt(cv, 24, 10)[3], 0, `${name} frameless background sample must be transparent`);
     assert.ok(countNonZero(cv) > 200, `${name} frameless mode must still render foreground glyphs`);
   }
+
+  // 3. When hn.show is null (even though hn.guide === 'CAR_PLAY'), turn card MUST stay hidden instead of drawing placeholder '-- / Ahead'
+  const noManeuverModel = Object.assign({}, model, {
+    telemetry: Object.assign({}, model.telemetry, {
+      hudNav: Object.assign({}, routeHudNav, { show: null })
+    })
+  });
+  r.render(noManeuverModel, { enabled: true, clusterSlotMode: 'panel_only', turnCardTriggerM: 'always' }, 6000);
+  assert.strictEqual(r.layers.guidance_turn_card.visible, false, 'turn card must hide cleanly when hn.show is null');
   r.close();
 }
 
 function testSimplifiedChineseLocaleAndPackage() {
   // After testAppRequiresAndSchema2Catalog ran build_catalog.js (default --language zh-CN),
   // inspect the built package tarball & staged files for genuine zh-CN localization.
+  const appSpec = JSON.parse(fs.readFileSync(path.join(ROOT, 'apps', 'id7_cockpit_plus', 'app.json'), 'utf8'));
   const builtLocalePath = path.join(ROOT, 'dist', 'id7_cockpit_plus', 'source', 'javascript', 'kit', 'locale.json');
   assert.ok(fs.existsSync(builtLocalePath), 'zh-CN release build must emit kit/locale.json');
   const builtLocale = JSON.parse(fs.readFileSync(builtLocalePath, 'utf8'));
@@ -359,10 +392,10 @@ function testSimplifiedChineseLocaleAndPackage() {
   assert.strictEqual(builtLocale.strings['Full-screen CarPlay map host'], '全屏 CarPlay 地图托管模式');
   assert.strictEqual(builtLocale.strings['TIRE PRESSURE & TEMP'], '胎压与胎温');
 
-  const appTgz = path.join(ROOT, 'dist', 'id7_cockpit_plus@0.9.4.tgz');
+  const appTgz = path.join(ROOT, 'dist', `id7_cockpit_plus@${appSpec.version}.tgz`);
   const entries = readTarEntries(appTgz);
   const pkgJson = JSON.parse(entries.get('package/package.json').toString('utf8'));
-  assert.strictEqual(pkgJson.version, '0.9.4', 'zh-CN package must preserve clean SemVer');
+  assert.strictEqual(pkgJson.version, appSpec.version, 'zh-CN package must preserve clean SemVer');
 
   const zhBundleEntry = entries.get('package/rhmiData/variantGroups/Common/texts/zh_CN.json');
   assert.ok(zhBundleEntry, 'zh-CN package must include rhmiData/variantGroups/Common/texts/zh_CN.json');
@@ -372,7 +405,6 @@ function testSimplifiedChineseLocaleAndPackage() {
   assert.ok(Object.prototype.hasOwnProperty.call(bundleStrings, 'SID_CN_DYNAMIC_0000'), 'SID_CN_DYNAMIC pool must be pre-allocated');
 
   // Verify 100% of app.json UI strings have zh-CN translations
-  const appSpec = JSON.parse(fs.readFileSync(path.join(ROOT, 'apps', 'id7_cockpit_plus', 'app.json'), 'utf8'));
   const zhDict = JSON.parse(fs.readFileSync(path.join(ROOT, 'vendor', 'cauliflowermossgrape-idrive7-apps', 'kit', 'runtime', 'locales', 'zh-CN.json'), 'utf8'));
   const missingAppKeys = [];
   const checkKey = (s) => { if (s && /[A-Za-z]/.test(s) && !zhDict[s]) missingAppKeys.push(s); };
