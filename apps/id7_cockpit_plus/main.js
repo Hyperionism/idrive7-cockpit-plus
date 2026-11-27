@@ -503,7 +503,7 @@ mgu.run({
                 lvDetail = 'Headway: ' + hwTxt + ' | Dist: ' + distTxt + ' | Rel: ' + relTxt +
                     (lv.rawGapX !== null && lv.rawGapX !== undefined ? (' | gapX=' + lv.rawGapX) : '');
             } else {
-                lvDetail = 'No lead vehicle ahead (st=' + (lv.status || 'idle') +
+                lvDetail = 'No lead vehicle (st=' + (lv.status || 'idle') +
                     (lv.rawGap8 !== null && lv.rawGap8 !== undefined ? ', g8=' + lv.rawGap8 : '') + ')';
             }
             setTwoRow(

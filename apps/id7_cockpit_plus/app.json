@@ -2,7 +2,7 @@
   "id": "id7_cockpit_plus",
   "title": "Cockpit+",
   "description": "Cockpit+ for BMW iDrive 7 (KOMBI4 + HUD): calibrated Cluster+ wing widgets, per-line left speed telemetry, 5AU top-center CarPlay/Baidu lane guidance, centered iOS turn card & ETA pill over hosted FullView 1632x720 map, and bold HUD navigation",
-  "version": "0.9.5",
+  "version": "0.9.6",
   "autostart": true,
   "license": "GPL-3.0-only",
   "vendor": "idrive7-cockpit-plus",
@@ -28,8 +28,8 @@
   "iconGlyph": "id7_cockpit_plus",
   "mguHmi": ["ID7"],
   "requires": {
-    "cluster-render": "0.8.14",
-    "waze-on-cluster": "0.14.16",
+    "cluster-render": "2.9.0",
+    "waze-on-cluster": "2.9.0",
     "cockpit-fullview": "1.0.0"
   },
   "signals": {
