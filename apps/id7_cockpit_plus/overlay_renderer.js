@@ -120,8 +120,8 @@ const RIGHT_WIDGET_BASE = { x: 1244, y: 88, w: 536, h: 520 };
 const SPEED_BASE = { x: 372, y: 328, w: 220, h: 90 };
 // Top-center 5AU camera pocket iOS turn card (stock OEM KOMBI4 already renders bottom lane bar)
 const TURN_CARD_BASE = { x: 760, y: 18, w: 400, h: 96 };
-// Bottom-center iOS arrival ETA capsule
-const ETA_PILL_BASE = { x: 760, y: 648, w: 400, h: 46 };
+// Bottom-center iOS arrival ETA capsule (lifted +20px to clear parked 'Total ... km' odometer row)
+const ETA_PILL_BASE = { x: 760, y: 628, w: 400, h: 46 };
 
 // Strictly y=100..200 (<= 202 Assisted Driving / ACC set-speed & green car keep-out)
 const HUD_BASE = { x: 136, y: 100, w: 268, h: 100 };
@@ -618,7 +618,7 @@ class OverlayRenderer {
     }
 
     isMapHostedLive() {
-        return (this.hostModeActive === 'fullview_dials' || this.hostModeActive === 'standby_center') &&
+        return (this.hostModeActive === 'fullview_dials' || this.hostModeActive === 'center_masked' || this.hostModeActive === 'standby_center') &&
             (this.hostingState === 'live' || this.mapHostedInto === 'panel');
     }
 
@@ -633,10 +633,9 @@ class OverlayRenderer {
     }
 
     _fullviewHostRect() {
-        // Keep hosted FullView map strictly within y=0..642 so it stays clear of
-        // ETA_PILL (y=648..694) and KOMBI4 GEAR_WIN (1380..1460, 648..720).
+        // Stretch hosted map across y=0..668 (video shaders strictly discard side bottom & GEAR_WIN 1380..1460, y>=656).
         const ms = this._parseMapTargetSize();
-        const dstH = 642;
+        const dstH = 668;
         const srcH = Math.max(32, Math.min(ms.h, Math.floor((ms.h * dstH) / 720) & ~1));
         return {
             target: 'map',
@@ -652,26 +651,28 @@ class OverlayRenderer {
         };
     }
 
-    _syncMapHost(mode, featherMode, standbyRescue) {
+    _syncMapHost(mode, featherMode, standbyCenter, panelAllowed) {
         const cleanMode = (mode === 'native' || mode === 'center' || mode === 'off')
             ? 'native'
             : 'fullview_dials';
         this.userMapMode = cleanMode;
-        // Never cover native KOMBI4 dials without native video-shader cutout support (cluster-render >= 2.9.1).
-        let effectiveMode = cleanMode;
-        if (cleanMode === 'fullview_dials') {
-            effectiveMode = (this.ready && !this.crHostMask) ? 'native' : 'fullview_dials';
-        } else if (standbyRescue && (!this.ready || this.crHostMask)) {
-            effectiveMode = 'standby_center';
+        const canShaderHost = Boolean(panelAllowed) && (!this.ready || this.crHostMask);
+        let effectiveMode = 'native';
+        let maskModeNum = 0;
+        if (canShaderHost) {
+            if (cleanMode === 'fullview_dials') {
+                effectiveMode = 'fullview_dials';
+                maskModeNum = this.crHostMask ? 1 : 0;
+            } else if (standbyCenter) {
+                effectiveMode = 'standby_center';
+                maskModeNum = this.crHostMask ? 3 : 0;
+            }
         }
         this.hostModeActive = effectiveMode;
 
-        const wantsHost = effectiveMode === 'fullview_dials' || effectiveMode === 'standby_center';
-        const featherPx = featherMode === 'tight' ? 56 : (featherMode === 'wide' ? 104 : 76);
-        const maskModeNum = (wantsHost && this.crHostMask)
-            ? (effectiveMode === 'standby_center' ? 2 : 1)
-            : 0;
-        this.bezelMaskMode = maskModeNum === 1 ? 'dials' : (maskModeNum === 2 ? 'standby' : 'off');
+        const wantsHost = effectiveMode !== 'native';
+        const featherPx = featherMode === 'tight' ? 68 : (featherMode === 'wide' ? 130 : 96);
+        this.bezelMaskMode = maskModeNum === 1 ? 'dials' : (maskModeNum === 3 ? 'standby' : 'off');
         if (!this.cr) return;
 
         const key = effectiveMode + '|' + maskModeNum + '|' + featherPx + '|' + (this.crHostMask ? '1' : '0');
@@ -899,19 +900,16 @@ class OverlayRenderer {
         const eff = model.efficiency || {};
 
         // Consistent Cluster Display Mode:
-        //   - 'panel_only' (default): all outer vitals + Right-Wing Widget + FullView/Center map on 0x203
-        //   - 'map_only': Outer Vitals Only on 0x203 (keeps outer vitals in original rim positions & preserves stock right BC widget)
+        //   - 'panel_only' (default): FullView uses 0x203 (outer vitals + Right-Wing Widget + FullView map);
+        //     Center Small Map ('native') releases panel 0x203 during normal driving so KOMBI4 restores the genuine stock 0x200 BC card
+        //     (and only wakes 0x203 with mask_mode=3 during engine-off standby while routing).
+        //   - 'map_only': Outer Vitals Only on 0x203 (keeps outer vitals in original rim positions)
         //   (Falls back to 0x100 'map' layer overlay only if legacy 0x202 conflict blocks 0x203.)
         const rawSlotMode = s.clusterSlotMode || 'panel_only';
         const clusterSlotMode = rawSlotMode === 'map_only' ? 'map_only' : 'panel_only';
         const isOuterOnlyMode = clusterSlotMode === 'map_only';
         const canPanel = this.canUsePanel();
-        let panelAllowed = false;
-        let showMapOverlay = false;
-        if (wantCluster) {
-            panelAllowed = canPanel;
-            showMapOverlay = !canPanel && s.fallbackMapBar !== false && wazeOn;
-        }
+        const basePanelAvailable = Boolean(wantCluster && canPanel);
 
         // HUD navigation & route state (needed before standby map rescue check):
         const hudNavMode = s.hudNavMode || 'own_nav_minimap';
@@ -922,13 +920,16 @@ class OverlayRenderer {
         const routeOn = Boolean((hn && hn.routeActive) || t.navRouteActive);
         const lanesOn = Boolean((hn && hn.hasLanes) || t.navHasLanes);
 
-        // Engine-off standby rescue: if native 0x100 map slot locks while ignition/engine is OFF during routing,
-        // host map onto panel 0x203 using center-corridor mask_mode=2 until 0x100 unlocks or driving resumes.
+        // Native Center Small Map (0x100 + genuine stock 0x200 BC card) & Engine-Off Standby Rescue:
+        //   - On KOMBI4, any visible layer on panel 0x203 hides BMW's stock right-wing BC widget (slot 0x200).
+        //     So in Center Small Map ('native') driving mode, release panel 0x203 completely and unhost back to 0x100.
+        //   - When engine is OFF / 0x100 locked during active routing or Waze, temporarily wake panel 0x203
+        //     with mask_mode=3 (no redrawn speed / no software right card), then immediately release 0x203 once engine restarts.
         this._readClusterRenderStatus(now);
         const rawMapMode = (s.mapHostMode === 'native' || s.mapHostMode === 'center' || s.mapHostMode === 'off')
             ? 'native'
             : 'fullview_dials';
-        const wantHostMode = (panelAllowed && !isOuterOnlyMode) ? rawMapMode : 'native';
+        const isNativeMapMode = rawMapMode === 'native';
         const wazeSlotLocked = Boolean(this.wazeStatus && /locked/i.test((this.wazeStatus.error || '') + ' ' + (this.wazeStatus.reason || '')));
         const wazePresent = Boolean(wazeOn || (this.wazeStatus && this.wazeStatus.state && this.wazeStatus.state !== 'off'));
         const drivingActive = Boolean(
@@ -937,16 +938,30 @@ class OverlayRenderer {
             t.stage === 'R' ||
             (typeof t.speedKmh === 'number' && t.speedKmh > 1.5)
         );
-        if (!panelAllowed || wantHostMode !== 'native' || (!routeOn && !wazePresent)) {
+        const engineOffStandby = Boolean(
+            !t.demo &&
+            !t.stage &&
+            (t.rpm === 0 || t.rpm === null || t.rpm === undefined) &&
+            (t.speedKmh === null || t.speedKmh === undefined || t.speedKmh < 0.5)
+        );
+        if (!basePanelAvailable || isOuterOnlyMode || !isNativeMapMode || (!routeOn && !wazePresent)) {
             this._standbyRescueActive = false;
-        } else if ((this.mapSlotLocked || wazeSlotLocked) && (routeOn || wazePresent)) {
+        } else if (this._standbyRescueActive && (drivingActive || this.mapTargetState === 'shown' || (!this.mapSlotLocked && !wazeSlotLocked && !engineOffStandby))) {
+            this._standbyRescueActive = false;
+            if (drivingActive) this.mapSlotLocked = false;
+        } else if (!drivingActive && (this.mapSlotLocked || wazeSlotLocked || engineOffStandby) && (routeOn || wazePresent)) {
             this._standbyRescueActive = true;
-        } else if (this._standbyRescueActive && (drivingActive || this.mapTargetState === 'shown')) {
-            this._standbyRescueActive = false;
         }
         this.standbyRescue = this._standbyRescueActive;
-        this._syncMapHost(wantHostMode, s.mapBezelFeather || 'standard', this._standbyRescueActive);
-        const isNativeMapMode = wantHostMode === 'native';
+        const nativePanelReleased = Boolean(basePanelAvailable && !isOuterOnlyMode && isNativeMapMode && !this._standbyRescueActive);
+        let panelAllowed = false;
+        let showMapOverlay = false;
+        if (wantCluster) {
+            panelAllowed = canPanel && !nativePanelReleased;
+            showMapOverlay = !canPanel && s.fallbackMapBar !== false && wazeOn;
+        }
+        const wantHostMode = (panelAllowed && !isOuterOnlyMode) ? rawMapMode : 'native';
+        this._syncMapHost(wantHostMode, s.mapBezelFeather || 'standard', this._standbyRescueActive, panelAllowed && !isOuterOnlyMode);
 
         let hudYieldedToNav = false;
         let hudYieldReason = '';
@@ -1214,6 +1229,7 @@ class OverlayRenderer {
             userMapMode: this.userMapMode,
             isNativeMapMode,
             isOuterOnlyMode,
+            nativePanelReleased,
             standbyRescue: this.standbyRescue,
             crHostLayers: this.crHostLayers,
             crHostMask: this.crHostMask,
@@ -1287,10 +1303,10 @@ class OverlayRenderer {
                 this._setVisible('guidance_turn_card', false);
             }
 
-            // 1a5. Bottom-Center iOS Arrival ETA Capsule (760..1160, 648..694 by default; wide free X/Y with GEAR_WIN guard)
+            // 1a5. Bottom-Center iOS Arrival ETA Capsule (760..1160, 628..674 by default; wide free X/Y with GEAR_WIN guard)
             if (showClusterEtaPill) {
                 const epNx = clamp(Number(s.etaPillNudgeX) || 0, -520, 520);
-                const epNy = clamp(Number(s.etaPillNudgeY) || 0, -580, 40);
+                const epNy = clamp(Number(s.etaPillNudgeY) || 0, -560, 60);
                 const epRect = resolveWidgetRect(layoutState, 'eta_pill', ETA_PILL_BASE, cx + epNx, cy + epNy, {
                     minX: 240, maxX: 1720 - ETA_PILL_BASE.w, minY: 60, maxY: 716 - ETA_PILL_BASE.h,
                 });
@@ -1327,11 +1343,26 @@ class OverlayRenderer {
                 this._setVisible('gear_d', false);
             }
 
-            // 1b2. Stacked 'CABIN' Interior Temperature Left of Ambient Temp (1488..1539, 654..704; HVAC-mode colored)
+            // 1b2. Stacked 'CABIN' Interior Temperature (HVAC-mode colored):
+            //   - ICE cars: x=1712..1763 (empty black pocket right of stock ambient +14.5°C [1510..1674] & left of 12V [1816+])
+            //   - Metric PHEV cars: x=1170..1221 (left of COMFORT [1230+], clear of ETA pill [760..1160], +14.5°C & EV_RANGE [1680..1814])
+            //   - US PHEV cars: x=1488..1539 (between gear_d [1461..1487] and shorter stock +57°F [1540+])
             if (showCabinTemp) {
-                const ctRect = resolveWidgetRect(layoutState, 'cabin_temp', CABIN_TEMP_BASE, cx, cy, {
-                    minX: 1487, maxX: 1489, minY: 650, maxY: 658,
-                });
+                const isPhevCar = Boolean(profile && profile.vehicleType === 'phev');
+                const isMetricTemp = Boolean(units && units.tempUnit === 'C');
+                const defaultCabinX = !isPhevCar ? 1712 : (isMetricTemp ? 1170 : 1488);
+                const cabinCustom = Boolean(layoutState && layoutState.customKeys && layoutState.customKeys.cabin_temp);
+                const cabinBase = Object.assign({}, CABIN_TEMP_BASE, { x: defaultCabinX });
+                const minCabinX = defaultCabinX === 1488 ? 1487 : defaultCabinX - 12;
+                const maxCabinX = defaultCabinX === 1488 ? 1489 : defaultCabinX + 12;
+                const ctRect = cabinCustom
+                    ? resolveWidgetRect(layoutState, 'cabin_temp', cabinBase, cx, cy, null)
+                    : {
+                        x: clamp(defaultCabinX + cx, minCabinX, maxCabinX),
+                        y: clamp(CABIN_TEMP_BASE.y + cy, 650, 658),
+                        w: CABIN_TEMP_BASE.w,
+                        h: CABIN_TEMP_BASE.h,
+                    };
                 const lCt = this._ensureOrLocal('cabin_temp', Object.assign({ target: 'panel', visible: true, z: 14 }, ctRect));
                 this._paintCabinTemp(lCt.cv, t.cabinTempC, units, t.cabinHvacMode);
                 this._setVisible('cabin_temp', true);

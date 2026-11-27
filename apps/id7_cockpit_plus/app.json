@@ -1,8 +1,8 @@
 {
   "id": "id7_cockpit_plus",
   "title": "Cockpit+",
-  "description": "Cockpit+ for BMW iDrive 7 (KOMBI4 + HUD): calibrated feathered FullView 1632x642 map keeping native dials, top-center 5AU iOS turn card & ETA pill, right-wing widgets, per-line speed telemetry, and bold HUD navigation",
-  "version": "0.9.10",
+  "description": "Cockpit+ for BMW iDrive 7 (KOMBI4 + HUD): smooth SDF feathered FullView 1632x668, Center Small Map releasing panel 0x203 for genuine stock right BC card (0x200) with engine-off standby rescue, raised 5AU turn card & ETA pill, and bold HUD navigation",
+  "version": "0.9.13",
   "autostart": true,
   "license": "GPL-3.0-only",
   "vendor": "idrive7-cockpit-plus",
@@ -28,8 +28,8 @@
   "iconGlyph": "id7_cockpit_plus",
   "mguHmi": ["ID7"],
   "requires": {
-    "cluster-render": "2.9.2",
-    "waze-on-cluster": "2.9.1",
+    "cluster-render": "2.9.4",
+    "waze-on-cluster": "2.9.2",
     "cockpit-fullview": "1.0.0"
   },
   "signals": {
@@ -599,7 +599,7 @@
         ],
         [
           "map_only",
-          "Outer Vitals Only (keeps stock right BC widget)"
+          "Outer Vitals Only (hides right widget & fullview)"
         ]
       ]
     },
@@ -1176,7 +1176,7 @@
       "label": "Full-screen CarPlay map host",
       "type": "choice",
       "default": "fullview_dials",
-      "reset": 3,
+      "reset": 4,
       "options": [
         [
           "fullview_dials",
@@ -1193,19 +1193,19 @@
       "label": "Bezel fade width",
       "type": "choice",
       "default": "standard",
-      "reset": 2,
+      "reset": 3,
       "options": [
         [
           "standard",
-          "Standard 76 px (default)"
+          "Standard 96 px (default)"
         ],
         [
           "tight",
-          "Compact 56 px (wider map)"
+          "Compact 68 px (wider map)"
         ],
         [
           "wide",
-          "Soft 104 px (wider fade)"
+          "Soft 130 px (wider fade)"
         ]
       ]
     },
@@ -1373,12 +1373,12 @@
       "unit": "px",
       "default": 0,
       "steps": [
-        -80,
+        -60,
         -40,
         -20,
         0,
-        12,
-        24
+        20,
+        40
       ]
     },
     {
