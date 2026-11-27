@@ -138,7 +138,7 @@ function testActivateNoOpWhenWazeAbsent() {
 
 function testAppRequiresAndSchema2Catalog() {
   const appJson = JSON.parse(fs.readFileSync(path.join(ROOT, 'apps', 'id7_cockpit_plus', 'app.json'), 'utf8'));
-  assert.strictEqual(appJson.requires['cluster-render'], '2.9.0');
+  assert.strictEqual(appJson.requires['cluster-render'], '2.9.1');
   assert.strictEqual(appJson.requires['waze-on-cluster'], '2.9.0');
   assert.strictEqual(appJson.requires['cockpit-fullview'], '1.0.0');
 
@@ -180,12 +180,111 @@ function testFullviewUpstreamPatcherAndExtraCatalog() {
   const wocDir = path.join(idriveRoot, 'native', 'waze-on-cluster');
   const wocAppDir = path.join(idriveRoot, 'apps', 'robertn_waze_cluster');
   fs.mkdirSync(path.join(crDir, 'kit'), { recursive: true });
+  fs.mkdirSync(path.join(crDir, 'src'), { recursive: true });
   fs.mkdirSync(path.join(wocDir, 'patch'), { recursive: true });
   fs.mkdirSync(path.join(wocAppDir, 'src'), { recursive: true });
   fs.mkdirSync(path.join(wocAppDir, 'package'), { recursive: true });
 
   fs.writeFileSync(path.join(crDir, 'kit', 'map_geometry.h'), 'constexpr uint32_t kMapAreaWidth = 1088;\nconstexpr uint32_t kMapAreaHeight = 480;\n', 'utf8');
   fs.writeFileSync(path.join(crDir, 'kit', 'map_geometry.cpp'), 'if (tex_w > kMapAreaWidth || tex_h > kMapAreaHeight)\n        return "texture larger than the 1088x480 map area";\n', 'utf8');
+  fs.writeFileSync(path.join(crDir, 'kit', 'yuv_atlas.cpp'), [
+    'const char *const kAtlasFragmentShader = R"(#version 100',
+    'precision highp float;',
+    'uniform sampler2D u_image;',
+    'uniform vec2 u_size;',
+    'uniform float u_opacity;',
+    'varying vec2 v_uv;',
+    'void main() {',
+    '    vec3 rgb = vec3(y + 1.402 * v, y - 0.344136 * u - 0.714136 * v, y + 1.772 * u);',
+    '    gl_FragColor = vec4(clamp(rgb, 0.0, 1.0), u_opacity);',
+    '})";'
+  ].join('\n'), 'utf8');
+  fs.writeFileSync(path.join(crDir, 'kit', 'block_pack.cpp'), [
+    'const char *const kBlockFragmentShader = R"(#version 100',
+    'precision highp float;',
+    'uniform sampler2D u_image;',
+    'uniform vec2 u_size;',
+    'uniform float u_opacity;',
+    'varying vec2 v_uv;',
+    'void main() {',
+    '    vec3 c = sel < 0.5 ? c0 : sel < 1.5 ? c1 : sel < 2.5 ? (2.0 * c0 + c1) / 3.0 : (c0 + 2.0 * c1) / 3.0;',
+    '    gl_FragColor = vec4(c, u_opacity);',
+    '})";'
+  ].join('\n'), 'utf8');
+  fs.writeFileSync(path.join(crDir, 'src', 'video_layer.h'), [
+    'struct VideoEdge {',
+    '    uint32_t top = 0, bottom = 0, fade = 0, dim = 0, blur = 0;',
+    '    bool on() const { return top || bottom; }',
+    '    bool operator==(const VideoEdge &o) const',
+    '    {',
+    '        return top == o.top && bottom == o.bottom && fade == o.fade && dim == o.dim && blur == o.blur;',
+    '    }',
+    '    bool operator!=(const VideoEdge &o) const { return !(*this == o); }',
+    '};',
+    '    void make_edge_quads();',
+    '    void drop_edge_quads();'
+  ].join('\n'), 'utf8');
+  fs.writeFileSync(path.join(crDir, 'src', 'video_layer.cpp'), [
+    'if (g_ && s.drawn && opaque_ && s.opacity * s.fade >= 1.0f && !s.turned)',
+    'bool VideoLayer::make_atlas_quads(Graph *g)',
+    '{',
+    '    const float size[2] = {(float)p_.w, (float)p_.h}, zero = 0.0f;',
+    '    atlas_quad_ = g->quad(atlas_effect_, drawn_params().rect);',
+    '    return atlas_quad_ && g->turn(atlas_quad_, drawn_params().turn()) && g->texture(atlas_quad_, "u_image", atlas_buf_) &&',
+    '           g->uniform(atlas_quad_, "u_size", size, 2) && g->uniform(atlas_quad_, "u_opacity", &zero, 1) &&',
+    '           g->show(atlas_quad_, false) && g->order(atlas_quad_, order_);',
+    '}',
+    '',
+    'bool VideoLayer::make_block_quads(Graph *g)',
+    '{',
+    '    const float size[2] = {(float)p_.w, (float)p_.h}, zero = 0.0f;',
+    '    block_quad_ = g->quad(block_effect_, drawn_params().rect);',
+    '    return block_quad_ && g->turn(block_quad_, drawn_params().turn()) && g->texture(block_quad_, "u_image", block_buf_[0]) &&',
+    '           g->uniform(block_quad_, "u_size", size, 2) && g->uniform(block_quad_, "u_opacity", &zero, 1) &&',
+    '           g->show(block_quad_, false) && g->order(block_quad_, order_ + 1);',
+    '}',
+    '',
+    'void VideoLayer::drop_quads()',
+    '{',
+    '    if (atlas_quad_) g_->drop_quad(atlas_quad_);',
+    '    if (block_quad_) g_->drop_quad(block_quad_);',
+    '    drop_edge_quads();',
+    '}',
+    '',
+    'bool VideoLayer::set_edge(const VideoEdge &e, int atlas_effect, int block_effect)',
+    '{',
+    '    if (e == edge_ && (!e.on() || (atlas_effect == edge_fx_[0] && block_effect == edge_fx_[1])))',
+    '        return false;',
+    '    edge_ = e;',
+    '    edge_fx_[0] = atlas_effect;',
+    '    edge_fx_[1] = block_effect;',
+    '    if (g_) {',
+    '        drop_edge_quads();',
+    '        make_edge_quads();',
+    '    }',
+    '    return true;',
+    '}',
+    '    if (edge_.on() && drawn_params().rect != edge_at_) {   /* the edge\'s quads and blur follow the rect */',
+    '        drop_edge_quads();',
+    '        make_edge_quads();',
+    '    }',
+    '    set_opacity();'
+  ].join('\n'), 'utf8');
+  fs.writeFileSync(path.join(crDir, 'src', 'compositor.cpp'), [
+    '                if (ed.on() && !edge_effects())',
+    '                    ed = VideoEdge();',
+    'if (!h.shown || !h.edge.on() || x0 < h.rect.x',
+    'return lh && lh->host.edge.on() ? clamped(lh->host.edge) : VideoEdge();'
+  ].join('\n'), 'utf8');
+  fs.writeFileSync(path.join(crDir, 'src', 'server.cpp'), [
+    '{"host_edge", "1"},',
+    '    static const char *const edge_keys[] = {"edge_top", "edge_bottom", "edge_fade", "edge_dim", "edge_blur"};',
+    '    static const double edge_max[] = {720, 720, 360, 4096, 32};',
+    '    double ev[5] = {0, 0, 0, 0, 0};',
+    '    for (size_t i = 0; i < 5; i++)',
+    '    h.edge.dim = (uint32_t)ev[3];',
+    '    h.edge.blur = (uint32_t)ev[4];'
+  ].join('\n'), 'utf8');
   fs.writeFileSync(path.join(crDir, 'component.json'), JSON.stringify({ id: 'cluster-render', kind: 'tool', version: '0.8.13' }), 'utf8');
   fs.writeFileSync(path.join(wocDir, 'waze-on-cluster.conf'), 'tex_size = 1088x480\nhosted_vpp_scale = 0\n', 'utf8');
   fs.writeFileSync(
@@ -209,9 +308,15 @@ function testFullviewUpstreamPatcherAndExtraCatalog() {
   );
 
   const res = patchIdriveApps(idriveRoot);
-  assert.strictEqual(res.clusterRenderVersion, '2.9.0');
+  assert.strictEqual(res.clusterRenderVersion, '2.9.1');
   assert.strictEqual(res.wazeOnClusterVersion, '2.9.0');
   assert.strictEqual(res.robertnWazeAppVersion, '0.6.17');
+  assert.ok(fs.readFileSync(path.join(crDir, 'kit', 'yuv_atlas.cpp'), 'utf8').includes('if (ma <= 0.002) discard;'));
+  assert.ok(fs.readFileSync(path.join(crDir, 'kit', 'block_pack.cpp'), 'utf8').includes('u_opacity * ma'));
+  assert.ok(fs.readFileSync(path.join(crDir, 'src', 'video_layer.h'), 'utf8').includes('has_mask()'));
+  assert.ok(fs.readFileSync(path.join(crDir, 'src', 'video_layer.cpp'), 'utf8').includes('VideoLayer::set_mask()'));
+  assert.ok(fs.readFileSync(path.join(crDir, 'src', 'compositor.cpp'), 'utf8').includes('h.edge.any()'));
+  assert.ok(fs.readFileSync(path.join(crDir, 'src', 'server.cpp'), 'utf8').includes('"host_mask"'));
   assert.strictEqual(JSON.parse(fs.readFileSync(path.join(crDir, 'component.json'), 'utf8')).uninstallable, true);
   assert.strictEqual(JSON.parse(fs.readFileSync(path.join(wocDir, 'component.json'), 'utf8')).uninstallable, true);
   assert.strictEqual(JSON.parse(fs.readFileSync(path.join(wocAppDir, 'package', 'package.json'), 'utf8')).version, '0.6.17');
@@ -265,7 +370,7 @@ function testOverlayRendererFullviewMapHost() {
 
   const calls = { hosts: [], unhosts: [], effects: [], sets: [], uniforms: [] };
   class StubCR extends EventEmitter {
-    constructor() { super(); this._next = 1; this.targets = 'map:1088x480,panel:1920x720,hud:800x480'; this.hostLayers = true; this.renderState = true; }
+    constructor() { super(); this._next = 1; this.targets = 'map:1088x480,panel:1920x720,hud:800x480'; this.hostLayers = true; this.hostMask = true; this.renderState = true; }
     connect() { this.emit('ready'); }
     close() {}
     image() { return this._next++; }
@@ -283,54 +388,43 @@ function testOverlayRendererFullviewMapHost() {
   const profile = { kind: 'ice', isPhev: false, isCold: false };
   const model = { units, profile, telemetry: { speedKmh: 62, gear: 3 }, efficiency: {} };
 
-  // 1. Before map hosting becomes live, bezelMask MUST stay hidden (never erase/paint unhosted factory gauges!)
+  // 1. Default fullview_dials sends mask_mode: 1 inside native video shader (zero separate effect layers) and auto-hides speed overlay
   r.render(model, { enabled: true, clusterSlotMode: 'panel_only', mapHostMode: 'fullview_dials' }, 1000);
   assert.strictEqual(calls.hosts.length, 1);
   assert.strictEqual(calls.hosts[0].into, 'panel');
   assert.deepStrictEqual(calls.hosts[0].opts, {
-    target: 'map', x: 144, y: 0, w: 1632, h: 616, src_x: 0, src_y: 0, src_w: 1088, src_h: 410, shown: 1
+    target: 'map', x: 144, y: 0, w: 1632, h: 616, src_x: 0, src_y: 0, src_w: 1088, src_h: 410, shown: 1, mask_mode: 1, mask_feather: 54
   });
   assert.ok(calls.hosts[0].opts.y + calls.hosts[0].opts.h < 648, 'FullView host rect must stay strictly above KOMBI4 GEAR_WIN (y>=648)');
-  assert.strictEqual(calls.effects.length, 0, 'bezelMask must NOT be created while map hosting is not live');
+  assert.strictEqual(calls.effects.length, 0, 'video-shader cutout must NOT create any separate effect layer');
+  assert.strictEqual(r.lastSummary.bezelMaskMode, 'dials');
+  assert.strictEqual(r.lastSummary.showClusterSpeed, false, 'speed overlay auto-hides when native dials are visible');
 
-  // 2. Once cluster-render confirms hosting is live, fullview_dials activates DstOut alpha-erasing cutout (u_mode=1) over y=0..616
-  r.cr.emit('hosting', 'map', { state: 'live' });
-  r.render(model, { enabled: true, clusterSlotMode: 'panel_only', mapHostMode: 'fullview_dials' }, 1020);
-  assert.strictEqual(calls.effects.length, 1);
-  assert.strictEqual(calls.effects[0].z, 2);
-  assert.strictEqual(calls.effects[0].w, 1632);
-  assert.strictEqual(calls.effects[0].h, 616, 'bezelMask height must cover host area while staying strictly above GEAR_WIN (648..720)');
-  assert.strictEqual(calls.effects[0].blend, 'alpha');
-  assert.strictEqual(calls.effects[0].blend_src, 'zero');
-  assert.strictEqual(calls.effects[0].blend_dst, 'one_minus_src_alpha');
-  assert.strictEqual(calls.effects[0].blend_src_alpha, 'zero');
-  assert.strictEqual(calls.effects[0].blend_dst_alpha, 'one_minus_src_alpha');
-  assert.strictEqual(calls.effects[0].blend_op, 'add');
-  assert.strictEqual(calls.effects[0].blend_op_alpha, 'add');
-  assert.strictEqual(calls.effects[0].color_mask, 'rgba');
-  assert.ok(calls.effects[0].fs.includes('616.0') && calls.effects[0].fs.includes('u_feather') && calls.effects[0].fs.includes('u_mode'));
-  assert.deepStrictEqual(calls.uniforms[0], { ref: calls.effects[0].ref, name: 'u_feather', values: [54] });
-  assert.deepStrictEqual(calls.uniforms[1], { ref: calls.effects[0].ref, name: 'u_mode', values: [1] });
-
-  // Switch to FullView Wide + transparent curved bezel cutout -> u_mode=0 and feather adjusts tight/wide
+  // 2. Switch to FullView Wide + transparent curved bezel cutout -> mask_mode: 2 and feather adjusts tight/wide, speed auto-enables
   r.render(model, { enabled: true, clusterSlotMode: 'panel_only', mapHostMode: 'fullview', mapBezelMask: true, mapBezelFeather: 'tight' }, 1040);
-  assert.ok(calls.uniforms.some((u) => u.ref === calls.effects[0].ref && u.name === 'u_feather' && u.values[0] === 36));
-  assert.ok(calls.uniforms.some((u) => u.ref === calls.effects[0].ref && u.name === 'u_mode' && u.values[0] === 0));
+  assert.strictEqual(calls.hosts[calls.hosts.length - 1].opts.mask_mode, 2);
+  assert.strictEqual(calls.hosts[calls.hosts.length - 1].opts.mask_feather, 36);
+  assert.strictEqual(r.lastSummary.bezelMaskMode, 'bezel');
+  assert.strictEqual(r.lastSummary.showClusterSpeed, true, 'speed overlay auto-enables in FullView Wide mode');
 
   r.render(model, { enabled: true, clusterSlotMode: 'panel_only', mapHostMode: 'fullview', mapBezelMask: true, mapBezelFeather: 'wide' }, 1080);
-  assert.ok(calls.uniforms.some((u) => u.ref === calls.effects[0].ref && u.name === 'u_feather' && u.values[0] === 80));
+  assert.strictEqual(calls.hosts[calls.hosts.length - 1].opts.mask_mode, 2);
+  assert.strictEqual(calls.hosts[calls.hosts.length - 1].opts.mask_feather, 80);
 
-  // 3. Explicit mapBezelMask: false in fullview wide mode hides bezelMask
+  // 3. Explicit mapBezelMask: false in fullview wide mode omits mask_mode
   r.render(model, { enabled: true, clusterSlotMode: 'panel_only', mapHostMode: 'fullview', mapBezelMask: false }, 1090);
-  assert.ok(calls.sets.some((s) => s.ref === calls.effects[0].ref && s.opts.visible === false), 'explicit mapBezelMask=false must hide bezelMask');
+  assert.strictEqual(calls.hosts[calls.hosts.length - 1].opts.mask_mode, undefined);
+  assert.strictEqual(r.lastSummary.bezelMaskMode, 'off');
 
-  // 4. Native / legacy center / legacy off modes ALL unhost to slot 0x100 (behind dials, zero occlusion)
+  // 4. Native / legacy center / legacy off modes ALL unhost to slot 0x100 (behind dials, zero occlusion) and auto-hide speed
   const hostsBeforeNative = calls.hosts.length;
   r.render(model, { enabled: true, clusterSlotMode: 'panel_only', mapHostMode: 'center', mapBezelMask: true }, 1100);
   r.render(model, { enabled: true, clusterSlotMode: 'panel_only', mapHostMode: 'native', mapBezelMask: true }, 1150);
   r.render(model, { enabled: true, clusterSlotMode: 'panel_only', mapHostMode: 'off' }, 1200);
   assert.strictEqual(calls.hosts.length, hostsBeforeNative, 'center/native/off must never host onto panel 0x203');
   assert.ok(calls.unhosts.length >= 1 && calls.unhosts.every((t) => t === 'map'), 'unhost must follow real ClusterRender.unhost(target) 1-arg signature');
+  assert.strictEqual(r.lastSummary.showClusterSpeed, false);
+  assert.strictEqual(calls.effects.length, 0);
 
   // 4. Metric unit inference when car reports Celsius temperature without explicit distance enum
   const partialMetric = decodeCarUnits({ unitOfMeasurementTemperature: 1 });
@@ -378,7 +472,7 @@ function testClusterWidgetPlateToggles() {
   }
 
   // 1. Default plate configuration: speed frameless, nav widgets natural smoked glass (neutral RGB, zero blue border)
-  r.render(model, { enabled: true, clusterSlotMode: 'panel_only' }, 2000);
+  r.render(model, { enabled: true, clusterSlotMode: 'panel_only', clusterSpeedOverlay: 'on' }, 2000);
   assert.strictEqual(r.layers.guidance_turn_card.visible, true, 'turn card must read maneuver from hn.show when hn.guide is provider string');
   assert.strictEqual(pxAt(r.layers.speed.cv, 24, 10)[3], 0, 'speed default frameless body sample must be transparent');
   for (const name of ['lane_guidance', 'guidance_turn_card', 'eta_pill']) {
@@ -392,6 +486,7 @@ function testClusterWidgetPlateToggles() {
   r.render(model, {
     enabled: true,
     clusterSlotMode: 'panel_only',
+    clusterSpeedOverlay: 'on',
     speedPlate: 'glass',
     laneBarPlate: 'none',
     turnCardPlate: 'none',

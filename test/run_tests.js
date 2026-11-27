@@ -711,8 +711,8 @@ function inBox(x, y, box) {
         rDefault.render(modelA, { enabled: true, gearDisplay: 'next_to_d' }, 5000);
         await wait(60);
 
-        assert.strictEqual(recorded.layers.filter((l) => l.target === 'panel' && (!l.kind || l.kind === 'image')).length, 8, 'default PHEV panel_only must activate 5 outer zones + hv_soc_gauge + right_widget + speed');
-        assert.strictEqual(recorded.layers.some((l) => l.target === 'panel' && l.kind === 'effect' && l.z === 2), false, 'FullView bezel fade effect must stay OFF by default / when map hosting is not live');
+        assert.strictEqual(recorded.layers.filter((l) => l.target === 'panel' && (!l.kind || l.kind === 'image')).length, 7, 'default PHEV panel_only in dials/native mode must activate 5 outer zones + hv_soc_gauge + right_widget (auto-hiding speed overlay to avoid double 00)');
+        assert.strictEqual(recorded.layers.some((l) => l.target === 'panel' && l.kind === 'effect'), false, 'must never create blackening overlay effect layers');
         assert(rDefault.layerCount() <= 16);
         assert(rDefault.pixelBytesTotal() < 3.5 * 1024 * 1024);
 
@@ -3100,7 +3100,7 @@ function inBox(x, y, box) {
                 hudNav: hn,
             },
         };
-        const settings = { enabled: true, hudNavMode: 'own_nav_minimap', turnCardTriggerM: '350' };
+        const settings = { enabled: true, hudNavMode: 'own_nav_minimap', turnCardTriggerM: '350', clusterSpeedOverlay: 'on' };
         r.render(model, settings, 1200);
 
         // Verify 5AU lane strip & ETA pill active; turn card waiting (>350m / no turn); speed frameless
@@ -3224,7 +3224,7 @@ function inBox(x, y, box) {
         assert.strictEqual(appSpec.id, 'id7_cockpit_plus');
         assert.strictEqual(appSpec.title, 'Cockpit+');
         assert.strictEqual(appSpec.loggingId, 'OA7C');
-        assert.strictEqual(appSpec.requires && appSpec.requires['cluster-render'], '2.9.0');
+        assert.strictEqual(appSpec.requires && appSpec.requires['cluster-render'], '2.9.1');
         assert.strictEqual(appSpec.requires && appSpec.requires['waze-on-cluster'], '2.9.0');
         assert.strictEqual(appSpec.requires && appSpec.requires['cockpit-fullview'], '1.0.0');
         assert(!appSpec.npmFiles, 'jpeg_decoder.js must be bundled directly without npmFiles');
@@ -3282,9 +3282,9 @@ function inBox(x, y, box) {
         fs.rmSync(mockBase, { recursive: true, force: true });
     });
 
-    /* 30. FullView Host, Native 0x100 Unhost, and DstOut Alpha-Cutout Blend Contract */
-    await test('FullView host uses unhost for native/center, DstOut blend for transparent cutouts, and safe fallback without render_state', async () => {
-        const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fullview-dstout-test-'));
+    /* 30. FullView Host, Native 0x100 Unhost, and Shader-Level Alpha Cutout Contract */
+    await test('FullView host uses native video-shader mask_mode cutout (zero blackening effects), auto-hides double speed, and falls back without host_mask', async () => {
+        const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fullview-shader-mask-test-'));
         const confDir = path.join(tmpDir, 'conf');
         fs.mkdirSync(confDir);
         const wazeFile = path.join(tmpDir, 'waze-status.json');
@@ -3365,62 +3365,51 @@ function inBox(x, y, box) {
             telemetry: { speedKmh: 62, rpm: 1650, stage: 'D', program: 'D', gear: 5, navRouteActive: false, navHasLanes: false },
         };
 
-        // 1. Modern cluster-render (host_layers: 1, render_state: 1)
-        const env1 = makeMockCR({ host_layers: 1, render_state: 1 });
+        // 1. Modern cluster-render 2.9.1+ (host_layers: 1, host_mask: 1)
+        const env1 = makeMockCR({ host_layers: 1, host_mask: 1, render_state: 1 });
         const r1 = new OverlayRenderer({ ClusterRender: env1.MockCR, confDir, wazeStatusPath: wazeFile, allowPanel: true });
         r1.connect();
         await wait(50);
 
-        // 1a. Default fullview_dials -> hosts 1632x616 and creates z=2 DstOut cutout effect with u_mode=1
+        // 1a. Default fullview_dials -> hosts 1632x616 with mask_mode=1, mask_feather=54, ZERO effect layers, speed hidden (auto)
         r1.render(model, { enabled: true }, 1000);
-        await wait(50);
-        r1.render(model, { enabled: true }, 1300);
         await wait(50);
 
         const hostOps1 = env1.ops.filter((o) => o.op === 'host');
         assert(hostOps1.length >= 1, 'fullview_dials must host map on panel');
         const lastHost1 = hostOps1[hostOps1.length - 1];
-        assert.deepStrictEqual({ into: lastHost1.into, x: lastHost1.x, y: lastHost1.y, w: lastHost1.w, h: lastHost1.h }, {
-            into: 'panel', x: 144, y: 0, w: 1632, h: 616,
+        assert.deepStrictEqual({ into: lastHost1.into, x: lastHost1.x, y: lastHost1.y, w: lastHost1.w, h: lastHost1.h, mask_mode: lastHost1.mask_mode, mask_feather: lastHost1.mask_feather }, {
+            into: 'panel', x: 144, y: 0, w: 1632, h: 616, mask_mode: 1, mask_feather: 54,
         });
-        const maskLayer = env1.ops.find((o) => o.op === 'layer' && o.kind === 'effect' && o.z === 2);
-        assert(maskLayer, 'DstOut cutout effect layer must be created');
-        assert.strictEqual(maskLayer.w, 1632);
-        assert.strictEqual(maskLayer.h, 616);
-        assert.strictEqual(maskLayer.blend, 'alpha');
-        assert.strictEqual(maskLayer.blend_src, 'zero');
-        assert.strictEqual(maskLayer.blend_dst, 'one_minus_src_alpha');
-        assert.strictEqual(maskLayer.blend_src_alpha, 'zero');
-        assert.strictEqual(maskLayer.blend_dst_alpha, 'one_minus_src_alpha');
-        assert.strictEqual(maskLayer.blend_op, 'add');
-        assert.strictEqual(maskLayer.blend_op_alpha, 'add');
-        assert.strictEqual(maskLayer.color_mask, 'rgba');
-        assert(maskLayer.fs.indexOf('u_mode') >= 0 && maskLayer.fs.indexOf('u_feather') >= 0);
+        assert.strictEqual(env1.ops.some((o) => o.op === 'layer' && o.kind === 'effect'), false, 'must NEVER create separate effect mask layer');
         assert.strictEqual(r1.lastSummary.bezelMaskMode, 'dials');
+        assert.strictEqual(r1.lastSummary.showClusterSpeed, false, 'speed overlay must auto-hide when native dials are visible');
 
-        const modeUniforms1 = env1.ops.filter((o) => o.op === 'uniform' && o.ref === maskLayer.ref && o.name === 'u_mode');
-        assert(modeUniforms1.length >= 1 && modeUniforms1[modeUniforms1.length - 1].v === '1');
-
-        // 1b. Switch to fullview wide + bezel cutout ON -> u_mode = 0
+        // 1b. Switch to fullview wide + bezel cutout ON -> mask_mode = 2, and speed overlay auto-enables
         r1.render(model, { enabled: true, mapHostMode: 'fullview', mapBezelMask: true }, 1600);
         await wait(50);
+        const hostOps2 = env1.ops.filter((o) => o.op === 'host');
+        const lastHost2 = hostOps2[hostOps2.length - 1];
+        assert.strictEqual(lastHost2.mask_mode, 2);
+        assert.strictEqual(lastHost2.mask_feather, 54);
         assert.strictEqual(r1.lastSummary.bezelMaskMode, 'bezel');
-        const modeUniforms2 = env1.ops.filter((o) => o.op === 'uniform' && o.ref === maskLayer.ref && o.name === 'u_mode');
-        assert.strictEqual(modeUniforms2[modeUniforms2.length - 1].v, '0');
+        assert.strictEqual(r1.lastSummary.showClusterSpeed, true, 'speed overlay must auto-enable in fullview wide mode');
 
-        // 1c. Switch to fullview wide + bezel cutout OFF -> mask hidden
+        // 1c. Switch to fullview wide + bezel cutout OFF -> mask_mode omitted (0)
         r1.render(model, { enabled: true, mapHostMode: 'fullview', mapBezelMask: false }, 1900);
         await wait(50);
+        const hostOps3 = env1.ops.filter((o) => o.op === 'host');
+        const lastHost3 = hostOps3[hostOps3.length - 1];
+        assert.strictEqual(lastHost3.mask_mode, undefined);
         assert.strictEqual(r1.lastSummary.bezelMaskMode, 'off');
-        const hideMaskOps = env1.ops.filter((o) => o.op === 'set' && o.ref === maskLayer.ref && o.visible === 0);
-        assert(hideMaskOps.length >= 1, 'mask must hide when mapBezelMask is false');
 
-        // 1d. Native / legacy center / legacy off must ALL unhost map (0x100 behind dials) and NEVER host at 416,120!
+        // 1d. Native / legacy center / legacy off must ALL unhost map (0x100 behind dials), NEVER host at 416,120, and auto-hide speed
         const beforeNativeHostCount = env1.ops.filter((o) => o.op === 'host').length;
         for (const mMode of ['native', 'center', 'off']) {
             r1.render(model, { enabled: true, mapHostMode: mMode }, 2200);
             await wait(30);
             assert.strictEqual(r1.lastSummary.hostModeActive, 'native', 'legacy/native mode ' + mMode + ' must resolve to native');
+            assert.strictEqual(r1.lastSummary.showClusterSpeed, false, 'native mode must auto-hide digital speed overlay');
         }
         assert.strictEqual(env1.ops.filter((o) => o.op === 'host').length, beforeNativeHostCount, 'native/center/off must NEVER call cr.host');
         assert(env1.ops.some((o) => o.op === 'unhost' && o.target === 'map'), 'native/center must call unhost("map")');
@@ -3429,15 +3418,15 @@ function inBox(x, y, box) {
         r1.close();
         env1.closeServer();
 
-        // 2. Older cluster-render without render_state: fullview_dials falls back to native & never paints black blobs
-        const env2 = makeMockCR({ host_layers: 1, render_state: 0 });
+        // 2. Older cluster-render <= 2.9.0 without host_mask: fullview_dials safely falls back to native 0x100
+        const env2 = makeMockCR({ host_layers: 1, host_mask: 0, render_state: 1 });
         const r2 = new OverlayRenderer({ ClusterRender: env2.MockCR, confDir, wazeStatusPath: wazeFile, allowPanel: true });
         r2.connect();
         await wait(50);
         r2.render(model, { enabled: true, mapHostMode: 'fullview_dials' }, 3000);
         await wait(50);
-        assert.strictEqual(r2.lastSummary.hostModeActive, 'native', 'missing render_state must safely fall back from fullview_dials to native');
-        assert.strictEqual(env2.ops.some((o) => o.op === 'layer' && o.kind === 'effect'), false, 'must never create black effect layer without render_state');
+        assert.strictEqual(r2.lastSummary.hostModeActive, 'native', 'missing host_mask must safely fall back from fullview_dials to native');
+        assert.strictEqual(env2.ops.some((o) => o.op === 'layer' && o.kind === 'effect'), false);
         assert.strictEqual(env2.ops.some((o) => o.op === 'host'), false, 'fallback must not host over dials');
         assert(env2.ops.some((o) => o.op === 'unhost' && o.target === 'map'));
         r2.close();
