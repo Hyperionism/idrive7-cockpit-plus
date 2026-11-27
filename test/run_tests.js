@@ -3189,8 +3189,8 @@ function inBox(x, y, box) {
         assert.strictEqual(appSpec.id, 'id7_cockpit_plus');
         assert.strictEqual(appSpec.title, 'Cockpit+');
         assert.strictEqual(appSpec.loggingId, 'OA7C');
-        assert.strictEqual(appSpec.requires && appSpec.requires['cluster-render'], '0.8.14');
-        assert.strictEqual(appSpec.requires && appSpec.requires['waze-on-cluster'], '0.14.16');
+        assert.strictEqual(appSpec.requires && appSpec.requires['cluster-render'], '2.9.0');
+        assert.strictEqual(appSpec.requires && appSpec.requires['waze-on-cluster'], '2.9.0');
         assert.strictEqual(appSpec.requires && appSpec.requires['cockpit-fullview'], '1.0.0');
         assert(!appSpec.npmFiles, 'jpeg_decoder.js must be bundled directly without npmFiles');
         assert(fs.existsSync(path.join(APP_DIR, 'jpeg_decoder.js')));

@@ -138,8 +138,8 @@ function testActivateNoOpWhenWazeAbsent() {
 
 function testAppRequiresAndSchema2Catalog() {
   const appJson = JSON.parse(fs.readFileSync(path.join(ROOT, 'apps', 'id7_cockpit_plus', 'app.json'), 'utf8'));
-  assert.strictEqual(appJson.requires['cluster-render'], '0.8.14');
-  assert.strictEqual(appJson.requires['waze-on-cluster'], '0.14.16');
+  assert.strictEqual(appJson.requires['cluster-render'], '2.9.0');
+  assert.strictEqual(appJson.requires['waze-on-cluster'], '2.9.0');
   assert.strictEqual(appJson.requires['cockpit-fullview'], '1.0.0');
 
   const dryRes = childProcess.execFileSync(
@@ -181,7 +181,8 @@ function testFullviewUpstreamPatcherAndExtraCatalog() {
   const wocAppDir = path.join(idriveRoot, 'apps', 'robertn_waze_cluster');
   fs.mkdirSync(path.join(crDir, 'kit'), { recursive: true });
   fs.mkdirSync(path.join(wocDir, 'patch'), { recursive: true });
-  fs.mkdirSync(wocAppDir, { recursive: true });
+  fs.mkdirSync(path.join(wocAppDir, 'src'), { recursive: true });
+  fs.mkdirSync(path.join(wocAppDir, 'package'), { recursive: true });
 
   fs.writeFileSync(path.join(crDir, 'kit', 'map_geometry.h'), 'constexpr uint32_t kMapAreaWidth = 1088;\nconstexpr uint32_t kMapAreaHeight = 480;\n', 'utf8');
   fs.writeFileSync(path.join(crDir, 'kit', 'map_geometry.cpp'), 'if (tex_w > kMapAreaWidth || tex_h > kMapAreaHeight)\n        return "texture larger than the 1088x480 map area";\n', 'utf8');
@@ -194,10 +195,24 @@ function testFullviewUpstreamPatcherAndExtraCatalog() {
   );
   fs.writeFileSync(path.join(wocDir, 'component.json'), JSON.stringify({ id: 'waze-on-cluster', kind: 'tool', version: '0.14.15', requires: { 'cluster-render': '0.5.3' } }), 'utf8');
   fs.writeFileSync(path.join(wocAppDir, 'release.json'), JSON.stringify({ requires: { 'waze-on-cluster': '0.14.2' } }), 'utf8');
+  fs.writeFileSync(path.join(wocAppDir, 'package', 'package.json'), JSON.stringify({ name: 'robertn_waze_cluster', version: '0.6.16' }), 'utf8');
+  fs.writeFileSync(path.join(wocAppDir, 'mgu-app.json'), JSON.stringify({ id: 'robertn_waze_cluster', version: '0.6.16' }), 'utf8');
+  fs.writeFileSync(
+    path.join(wocAppDir, 'src', 'waze_cluster_control.js'),
+    "const SIZE = '1088x480';\nconst SAFE = '504x368+286+72';\nfunction outdated(ps) { return !!((ps.mode && ps.mode !== 'avb') || (ps.panel && ps.panel !== 'high') || (ps.res && ps.res !== SIZE) || (ps.safe && ps.safe !== SAFE) || ps.mapurl === 'no-eta'); }\n",
+    'utf8'
+  );
 
   const res = patchIdriveApps(idriveRoot);
-  assert.strictEqual(res.clusterRenderVersion, '0.8.14');
-  assert.strictEqual(res.wazeOnClusterVersion, '0.14.16');
+  assert.strictEqual(res.clusterRenderVersion, '2.9.0');
+  assert.strictEqual(res.wazeOnClusterVersion, '2.9.0');
+  assert.strictEqual(res.robertnWazeAppVersion, '0.6.17');
+  assert.strictEqual(JSON.parse(fs.readFileSync(path.join(crDir, 'component.json'), 'utf8')).uninstallable, true);
+  assert.strictEqual(JSON.parse(fs.readFileSync(path.join(wocDir, 'component.json'), 'utf8')).uninstallable, true);
+  assert.strictEqual(JSON.parse(fs.readFileSync(path.join(wocAppDir, 'package', 'package.json'), 'utf8')).version, '0.6.17');
+  assert.strictEqual(JSON.parse(fs.readFileSync(path.join(wocAppDir, 'mgu-app.json'), 'utf8')).version, '0.6.17');
+  assert.ok(fs.readFileSync(path.join(wocAppDir, 'src', 'waze_cluster_control.js'), 'utf8').includes("ps.res !== '1632x720'"));
+  assert.ok(fs.readFileSync(path.join(wocAppDir, 'src', 'waze_cluster_control.js'), 'utf8').includes("ps.safe !== '690x490+380+110'"));
   assert.ok(fs.readFileSync(path.join(crDir, 'kit', 'map_geometry.h'), 'utf8').includes('kMaxMapTexWidth = 1632'));
   assert.ok(fs.readFileSync(path.join(crDir, 'kit', 'map_geometry.cpp'), 'utf8').includes('tex_h > kMaxMapTexHeight'));
   assert.ok(/^\s*tex_size\s*=\s*1632x720\s*$/m.test(fs.readFileSync(path.join(wocDir, 'waze-on-cluster.conf'), 'utf8')));
@@ -215,22 +230,22 @@ function testFullviewUpstreamPatcherAndExtraCatalog() {
   const distTmp = path.join(tmp, 'dist-out');
   fs.mkdirSync(upDir, { recursive: true });
   fs.mkdirSync(distTmp, { recursive: true });
-  fs.writeFileSync(path.join(upDir, 'cluster-render@0.8.14.tgz'), 'cr-tgz');
+  fs.writeFileSync(path.join(upDir, 'cluster-render@2.9.0.tgz'), 'cr-tgz');
   fs.writeFileSync(path.join(upDir, 'extra.json'), JSON.stringify({
     components: [{
       id: 'cluster-render',
       kind: 'tool',
       title: 'Cluster renderer',
       description: 'FullView renderer',
-      version: '0.8.14',
-      artifact: { name: 'cluster-render@0.8.14.tgz' },
+      version: '2.9.0',
+      artifact: { name: 'cluster-render@2.9.0.tgz' },
       mguHmi: ['ID7']
     }]
   }));
-  const merged = loadExtraCatalogEntries([path.join(upDir, 'extra.json')], 'https://github.com/Hyperionism/idrive7-cockpit-plus/releases/download/v0.9.4', distTmp);
+  const merged = loadExtraCatalogEntries([path.join(upDir, 'extra.json')], 'https://github.com/Hyperionism/idrive7-cockpit-plus/releases/download/v0.9.6', distTmp);
   assert.strictEqual(merged.entries.length, 1);
-  assert.strictEqual(merged.entries[0].artifact.url, 'https://github.com/Hyperionism/idrive7-cockpit-plus/releases/download/v0.9.4/cluster-render@0.8.14.tgz');
-  assert.strictEqual(fs.existsSync(path.join(distTmp, 'cluster-render@0.8.14.tgz')), true);
+  assert.strictEqual(merged.entries[0].artifact.url, 'https://github.com/Hyperionism/idrive7-cockpit-plus/releases/download/v0.9.6/cluster-render@2.9.0.tgz');
+  assert.strictEqual(fs.existsSync(path.join(distTmp, 'cluster-render@2.9.0.tgz')), true);
 
   fs.rmSync(tmp, { recursive: true, force: true });
 }
