@@ -234,7 +234,7 @@ function inBox(x, y, box) {
             assert(r.layers.cabin_temp.rect.x >= gd.rect.x + gd.rect.w - 3 && r.layers.cabin_temp.rect.x + r.layers.cabin_temp.rect.w <= 1540,
                 'cabin_temp must sit cleanly between gear_d and AMBIENT_TEMP (1540), got ' + JSON.stringify(r.layers.cabin_temp.rect));
             const gdd = gd.cv.d;
-            let maxR = 0, maxG = 0, maxB = 0, minWy = 999, maxWy = 0;
+            let maxR = 0, maxG = 0, maxB = 0, minWx = 9999, minWy = 999, maxWy = 0;
             for (let py = 0; py < gd.rect.h; py++) {
                 for (let px = 0; px < gd.rect.w; px++) {
                     const off = (py * gd.rect.w + px) * 4;
@@ -247,11 +247,13 @@ function inBox(x, y, box) {
                     if (bb > maxB) maxB = bb;
                     const wx = gd.rect.x + px, wy = gd.rect.y + py;
                     assert(wx >= 1461 && wx < 1490, 'gear_d pixel must stay clear of GEAR_WIN (<=1460) at wx=' + wx);
+                    if (wx < minWx) minWx = wx;
                     if (wy < minWy) minWy = wy;
                     if (wy > maxWy) maxWy = wy;
                 }
             }
             assert(maxR > 200 && maxG > 200 && maxB > 200, 'gear_d expected bright white text pixels');
+            if (nudgeX <= 0) assert.strictEqual(minWx, 1461, 'gear_d first ink pixel must sit flush at x=1461 (right outside GEAR_WIN)');
             assert(minWy >= 660 && minWy <= 674, 'gear_d top should align with BMW D (~666), got minWy=' + minWy);
             assert(maxWy >= 690 && maxWy <= 700, 'gear_d bottom should align with BMW D (~696), got maxWy=' + maxWy);
         });
@@ -907,6 +909,39 @@ function inBox(x, y, box) {
             hu.ui.comp('SET_WIDGETMEDIA').emit('action', {});
             await wait(15);
             assert.strictEqual(hu.settings.get('widgetMedia'), true);
+
+            // Interactive free-positioning studio (LAYOUT_POS) & zero duplicated setting keys across menus
+            const seenMenuKeys = new Set();
+            const rawAppSpec = JSON.parse(fs.readFileSync(path.join(APP_DIR, 'app.json'), 'utf8'));
+            (rawAppSpec.screens || []).forEach((sc) => {
+                (sc.settings || []).forEach((ent) => {
+                    if (typeof ent === 'string') {
+                        assert(!seenMenuKeys.has(ent), 'Setting key duplicated across menus: ' + ent + ' (in ' + sc.name + ')');
+                        seenMenuKeys.add(ent);
+                    }
+                });
+            });
+            hu.ui.comp('BTN_LAYOUT_POS').emit('action', {});
+            await wait(20);
+            assert(hu.stack.includes('LAYOUT_POS'), 'BTN_LAYOUT_POS must open LAYOUT_POS studio');
+            hu.ui.comp('SET_POSSTEP').emit('action', { row: 0 }); // Fine 2 px
+            await wait(15);
+            hu.ui.comp('BTN_POS_RIGHT').emit('action', {});
+            hu.ui.comp('BTN_POS_UP').emit('action', {});
+            await wait(20);
+            assert.strictEqual(hu.settings.get('turnCardNudgeX'), 2);
+            assert.strictEqual(hu.settings.get('turnCardNudgeY'), -2);
+            hu.ui.comp('SET_POSSTEP').emit('action', { row: 2 }); // Fast 30 px
+            await wait(15);
+            hu.ui.comp('BTN_POS_RIGHT').emit('action', {});
+            await wait(15);
+            assert.strictEqual(hu.settings.get('turnCardNudgeX'), 32);
+            hu.ui.comp('BTN_POS_RESET_ONE').emit('action', {});
+            await wait(15);
+            assert.strictEqual(hu.settings.get('turnCardNudgeX'), 0);
+            assert.strictEqual(hu.settings.get('turnCardNudgeY'), 0);
+            hu.ui.comp('SET_POSSTEP').emit('action', { row: 1 }); // Standard 10 px
+            await wait(15);
 
             hu.ui.comp('TAB_HUD').emit('action', {});
             await wait(20);
