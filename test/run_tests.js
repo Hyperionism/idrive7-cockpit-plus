@@ -448,6 +448,29 @@ function inBox(x, y, box) {
             assert(hudL.rect.y + hudL.rect.h <= visible.HUD_ACC_ASSIST[1], 'hud_main hits Assisted Driving / ACC display (y>=202)');
             assert(hudL.rect.y + hudL.rect.h <= visible.HUD_BMW[1], 'hud_main hits HUD_BMW speed/Sport rev band');
         }
+
+        // Metric KOMBI4 cabin_temp non-overlapping placement check (+14.5°C spans 1495..1674 on real G20/G30 clusters)
+        const rIce = new OverlayRenderer({ allowPanel: true });
+        rIce.render({
+            units: unitsMod.METRIC_PRESET,
+            profile: { vehicleType: 'ice', engineOn: true, mode: 'gas_warm', isEv: false, isCold: false, coldCeilingRpm: null, alert: null },
+            telemetry: { speedKmh: 60, rpm: 1800, oilTempC: 92, coolantTempC: 90, cabinTempC: 22.0, stage: 'D', program: 'D', gear: 4, frictionG: 0 },
+            efficiency: { evKmPerKwh: null, fuelLPer100km: 7.5, isDfco: false },
+        }, { enabled: true, gearDisplay: 'next_to_d' }, 3500);
+        assert.strictEqual(rIce.layers.cabin_temp.rect.x, 1712, 'Metric ICE cabin_temp must sit right of stock +14.5C at x=1712');
+        assert(rIce.layers.cabin_temp.rect.x >= 1678 && rIce.layers.cabin_temp.rect.x + rIce.layers.cabin_temp.rect.w <= 1810,
+            'Metric ICE cabin_temp must clear both stock +14.5C (<=1674) and corner_right (>=1816)');
+
+        const rPhevMetric = new OverlayRenderer({ allowPanel: true });
+        rPhevMetric.render({
+            units: unitsMod.METRIC_PRESET,
+            profile: { vehicleType: 'phev', engineOn: false, mode: 'ev_drive', isEv: true, isCold: false, coldCeilingRpm: null, alert: null },
+            telemetry: { speedKmh: 60, rpm: 0, hvKw: 12, soc: 65, oilTempC: 50, coolantTempC: 72, cabinTempC: 22.0, stage: 'D', program: 'D', gear: 5, frictionG: 0 },
+            efficiency: { evKmPerKwh: 6.1, fuelLPer100km: null, isDfco: false },
+        }, { enabled: true, gearDisplay: 'next_to_d' }, 3600);
+        assert.strictEqual(rPhevMetric.layers.cabin_temp.rect.x, 1170, 'Metric PHEV cabin_temp must sit left of COMFORT at x=1170');
+        assert(rPhevMetric.layers.cabin_temp.rect.x >= 1164 && rPhevMetric.layers.cabin_temp.rect.x + rPhevMetric.layers.cabin_temp.rect.w <= 1228,
+            'Metric PHEV cabin_temp must clear ETA pill (<=1160) and DRIVE_MODE_STOCK_D (>=1230)');
     });
 
     /* 8. Friction Brake Physics, Lift-Throttle Regen Gate, Brake Hold & Corner-Right Mode */
@@ -3096,7 +3119,7 @@ function inBox(x, y, box) {
         assert.strictEqual(r.layers.lane_guidance, undefined, 'cluster lane_guidance must not be created');
         assert.strictEqual(r.layers.eta_pill.visible, true);
         assert.strictEqual(r.layers.eta_pill.rect.x, 760);
-        assert.strictEqual(r.layers.eta_pill.rect.y, 648);
+        assert.strictEqual(r.layers.eta_pill.rect.y, 628);
         assert(!r.layers.guidance_turn_card || !r.layers.guidance_turn_card.visible, 'turn card must wait until within trigger distance');
         assert.strictEqual(r.layers.speed.visible, true);
         assert.strictEqual(r.layers.speed.rect.x, 372);
@@ -3208,8 +3231,8 @@ function inBox(x, y, box) {
         assert.strictEqual(appSpec.id, 'id7_cockpit_plus');
         assert.strictEqual(appSpec.title, 'Cockpit+');
         assert.strictEqual(appSpec.loggingId, 'OA7C');
-        assert.strictEqual(appSpec.requires && appSpec.requires['cluster-render'], '2.9.2');
-        assert.strictEqual(appSpec.requires && appSpec.requires['waze-on-cluster'], '2.9.1');
+        assert.strictEqual(appSpec.requires && appSpec.requires['cluster-render'], '2.9.4');
+        assert.strictEqual(appSpec.requires && appSpec.requires['waze-on-cluster'], '2.9.2');
         assert.strictEqual(appSpec.requires && appSpec.requires['cockpit-fullview'], '1.0.0');
         assert(!appSpec.npmFiles, 'jpeg_decoder.js must be bundled directly without npmFiles');
         assert(fs.existsSync(path.join(APP_DIR, 'jpeg_decoder.js')));
@@ -3357,7 +3380,7 @@ function inBox(x, y, box) {
         r1.connect();
         await wait(50);
 
-        // 1a. Default fullview_dials -> hosts 1632x642 with mask_mode=1, mask_feather=76, ZERO effect layers, speed ON (auto)
+        // 1a. Default fullview_dials -> hosts 1632x668 with mask_mode=1, mask_feather=96, ZERO effect layers, speed ON (auto)
         r1.render(model, { enabled: true }, 1000);
         await wait(50);
 
@@ -3365,70 +3388,98 @@ function inBox(x, y, box) {
         assert(hostOps1.length >= 1, 'fullview_dials must host map on panel');
         const lastHost1 = hostOps1[hostOps1.length - 1];
         assert.deepStrictEqual({ into: lastHost1.into, x: lastHost1.x, y: lastHost1.y, w: lastHost1.w, h: lastHost1.h, mask_mode: lastHost1.mask_mode, mask_feather: lastHost1.mask_feather }, {
-            into: 'panel', x: 144, y: 0, w: 1632, h: 642, mask_mode: 1, mask_feather: 76,
+            into: 'panel', x: 144, y: 0, w: 1632, h: 668, mask_mode: 1, mask_feather: 96,
         });
         assert.strictEqual(env1.ops.some((o) => o.op === 'layer' && o.kind === 'effect'), false, 'must NEVER create separate effect mask layer');
         assert.strictEqual(r1.lastSummary.bezelMaskMode, 'dials');
         assert.strictEqual(r1.lastSummary.showClusterSpeed, true, 'speed overlay auto-enables in calibrated fullview_dials mode');
 
-        // 1b. Legacy fullview normalizes to fullview_dials (mask_mode = 1, feather tight = 56)
+        // 1b. Legacy fullview normalizes to fullview_dials (mask_mode = 1, feather tight = 68)
         r1.render(model, { enabled: true, mapHostMode: 'fullview', mapBezelFeather: 'tight' }, 1600);
         await wait(50);
         const hostOps2 = env1.ops.filter((o) => o.op === 'host');
         const lastHost2 = hostOps2[hostOps2.length - 1];
         assert.strictEqual(lastHost2.mask_mode, 1);
-        assert.strictEqual(lastHost2.mask_feather, 56);
+        assert.strictEqual(lastHost2.mask_feather, 68);
         assert.strictEqual(r1.lastSummary.hostModeActive, 'fullview_dials');
         assert.strictEqual(r1.lastSummary.showClusterSpeed, true);
 
-        // 1c. Feather wide = 104
+        // 1c. Feather wide = 130
         r1.render(model, { enabled: true, mapHostMode: 'fullview_dials', mapBezelFeather: 'wide' }, 1900);
         await wait(50);
         const hostOps3 = env1.ops.filter((o) => o.op === 'host');
         const lastHost3 = hostOps3[hostOps3.length - 1];
         assert.strictEqual(lastHost3.mask_mode, 1);
-        assert.strictEqual(lastHost3.mask_feather, 104);
+        assert.strictEqual(lastHost3.mask_feather, 130);
 
-        // 1d. Native / legacy center / legacy off must ALL unhost map (0x100 behind dials) and hide BOTH speed & right_widget
-        const beforeNativeHostCount = env1.ops.filter((o) => o.op === 'host').length;
+        // 1d. Native / legacy center / legacy off during driving RELEASES panel 0x203 and unhosts back to native 0x100
+        // so KOMBI4 restores genuine stock right-wing BC card (slot 0x200), disables software right_widget & speed,
+        // and keeps HUD (0x323) working normally!
         for (const mMode of ['native', 'center', 'off']) {
-            r1.render(model, { enabled: true, mapHostMode: mMode, clusterSpeedOverlay: 'on' }, 2200);
+            const unhostsBefore = env1.ops.filter((o) => o.op === 'unhost' && o.target === 'map').length;
+            r1.render(model, { enabled: true, mapHostMode: mMode, mapBezelFeather: 'tight', clusterSpeedOverlay: 'on' }, 2200);
             await wait(30);
-            assert.strictEqual(r1.lastSummary.hostModeActive, 'native', 'legacy/native mode ' + mMode + ' must resolve to native');
+            assert.strictEqual(r1.lastSummary.nativePanelReleased, true, 'driving native mode must release panel 0x203 for stock 0x200 BC');
+            assert.strictEqual(r1.lastSummary.panelAllowed, false, 'panelAllowed must be false when 0x203 is released');
+            assert.strictEqual(r1.lastSummary.hostModeActive, 'native');
+            assert.strictEqual(r1.lastSummary.bezelMaskMode, 'off');
             assert.strictEqual(r1.lastSummary.showClusterSpeed, false, 'Center Small Map must hide redrawn speed');
-            assert.strictEqual(r1.lastSummary.rightWidgetPage, 'off', 'Center Small Map must hide right_widget for stock BC');
+            assert.strictEqual(r1.lastSummary.rightWidgetPage, 'off', 'Center Small Map must NOT draw software right_widget');
+            assert.strictEqual(r1.lastSummary.showHud, true, 'HUD must stay active while panel 0x203 is released');
+            Object.keys(r1.layers).forEach((lname) => {
+                if (r1.layers[lname].target === 'panel') {
+                    assert.strictEqual(r1.layers[lname].visible, false, 'panel layer ' + lname + ' must be hidden');
+                }
+            });
+            const unhostsAfter = env1.ops.filter((o) => o.op === 'unhost' && o.target === 'map').length;
+            assert(unhostsAfter >= 1, 'unhost("map") must be active in native mode (' + unhostsBefore + ' -> ' + unhostsAfter + ')');
         }
-        assert.strictEqual(env1.ops.filter((o) => o.op === 'host').length, beforeNativeHostCount, 'native/center/off must NEVER call cr.host while 0x100 is unlocked');
-        assert(env1.ops.some((o) => o.op === 'unhost' && o.target === 'map'), 'native/center must call unhost("map")');
-        assert.strictEqual(env1.ops.some((o) => o.op === 'host' && o.x === 416 && o.y === 120), false, 'center must never host onto panel 0x203');
 
-        // 1e. Engine-off Standby Map Rescue in Center Small Map (native) mode:
-        // When KOMBI4 locks slot 0x100 while ignition is off during active routing, cr emits target('map','waiting','','slot locked'),
-        // and OverlayRenderer automatically hosts map onto panel 0x203 with mask_mode=2 (standby center corridor),
-        // keeping stock speed & right BC uncovered, then unhosts cleanly once driving/0x100 resumes!
+        // 1e. Engine-off Standby Map in Center Small Map (native) mode:
+        // When KOMBI4 locks slot 0x100 or engine is off during routing, temporarily wakes panel 0x203 with mask_mode=3
+        // (no software right card, no redrawn speed), then IMMEDIATELY releases 0x203 & restores stock BC when engine restarts
+        // (even BEFORE 'target map shown' arrives, avoiding standby lock deadlock)!
         r1.cr.emit('target', 'map', 'waiting', '', 'slot locked', false, false);
         const standbyModel = Object.assign({}, model, {
-            telemetry: { speedKmh: 0, rpm: 0, stage: 'P', program: 'D', gear: 0, navRouteActive: true, navHasLanes: false },
+            telemetry: { speedKmh: 0, rpm: 0, stage: null, program: 'D', gear: 0, navRouteActive: true, navHasLanes: false },
         });
         r1.render(standbyModel, { enabled: true, mapHostMode: 'native' }, 3100);
         await wait(50);
         const standbyHost = env1.ops.filter((o) => o.op === 'host').pop();
-        assert.strictEqual(r1.lastSummary.standbyRescue, true, 'locked 0x100 during routing must trigger standby map rescue');
+        assert.strictEqual(r1.lastSummary.standbyRescue, true, 'locked 0x100 / engine-off during routing must enter standby_center');
+        assert.strictEqual(r1.lastSummary.panelAllowed, true, 'standby rescue temporarily enables panel 0x203');
+        assert.strictEqual(r1.lastSummary.nativePanelReleased, false);
         assert.strictEqual(r1.lastSummary.hostModeActive, 'standby_center');
         assert.strictEqual(r1.lastSummary.bezelMaskMode, 'standby');
-        assert.strictEqual(standbyHost.mask_mode, 2, 'standby center rescue must send mask_mode=2');
-        assert.strictEqual(r1.lastSummary.showClusterSpeed, false, 'standby center rescue keeps stock speed visible');
-        assert.strictEqual(r1.lastSummary.rightWidgetPage, 'off', 'standby center rescue keeps stock right BC visible');
+        assert.strictEqual(standbyHost.mask_mode, 3, 'standby center must send mask_mode=3');
+        assert.strictEqual(r1.lastSummary.showClusterSpeed, false, 'standby center hides redrawn speed');
+        assert.strictEqual(r1.lastSummary.rightWidgetPage, 'off', 'standby center never shows software right_widget');
 
-        // Engine restarts & slot 0x100 unlocks -> automatically unhosts back to native 0x100
-        r1.cr.emit('target', 'map', 'shown', 'waze-on-cluster', '', false, false);
+        // Engine restarts (BEFORE target map shown event) -> clears standby rescue, unhosts 0x100, and hides 0x203!
         const drivingModel = Object.assign({}, model, {
             telemetry: { speedKmh: 0, rpm: 850, stage: 'D', program: 'D', gear: 1, navRouteActive: true, navHasLanes: false },
         });
+        const unhostBeforeRestart = env1.ops.filter((o) => o.op === 'unhost' && o.target === 'map').length;
         r1.render(drivingModel, { enabled: true, mapHostMode: 'native' }, 3600);
         await wait(50);
-        assert.strictEqual(r1.lastSummary.standbyRescue, false, 'unlocking 0x100 / engine start must clear standby rescue');
+        const unhostAfterRestart = env1.ops.filter((o) => o.op === 'unhost' && o.target === 'map').length;
+        assert.strictEqual(r1.lastSummary.standbyRescue, false, 'engine start must clear standby rescue even before target map shown');
+        assert.strictEqual(r1.lastSummary.nativePanelReleased, true);
+        assert.strictEqual(r1.lastSummary.panelAllowed, false);
         assert.strictEqual(r1.lastSummary.hostModeActive, 'native');
+        assert.strictEqual(r1.lastSummary.bezelMaskMode, 'off');
+        assert(unhostAfterRestart > unhostBeforeRestart, 'exiting standby must call unhost("map")');
+        Object.keys(r1.layers).forEach((lname) => {
+            if (r1.layers[lname].target === 'panel') {
+                assert.strictEqual(r1.layers[lname].visible, false, 'panel layer ' + lname + ' must hide on engine restart');
+            }
+        });
+
+        // Disabling Cockpit+ unhosts back to native 0x100
+        r1.render(drivingModel, { enabled: false, mapHostMode: 'native' }, 3900);
+        await wait(30);
+        assert.strictEqual(r1.lastSummary.hostModeActive, 'native');
+        assert(env1.ops.some((o) => o.op === 'unhost' && o.target === 'map'), 'disabling must call unhost("map")');
 
         r1.close();
         env1.closeServer();

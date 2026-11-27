@@ -138,8 +138,8 @@ function testActivateNoOpWhenWazeAbsent() {
 
 function testAppRequiresAndSchema2Catalog() {
   const appJson = JSON.parse(fs.readFileSync(path.join(ROOT, 'apps', 'id7_cockpit_plus', 'app.json'), 'utf8'));
-  assert.strictEqual(appJson.requires['cluster-render'], '2.9.2');
-  assert.strictEqual(appJson.requires['waze-on-cluster'], '2.9.1');
+  assert.strictEqual(appJson.requires['cluster-render'], '2.9.4');
+  assert.strictEqual(appJson.requires['waze-on-cluster'], '2.9.2');
   assert.strictEqual(appJson.requires['cockpit-fullview'], '1.0.0');
 
   const dryRes = childProcess.execFileSync(
@@ -303,8 +303,8 @@ function testFullviewUpstreamPatcherAndExtraCatalog() {
   );
 
   const res = patchIdriveApps(idriveRoot);
-  assert.strictEqual(res.clusterRenderVersion, '2.9.2');
-  assert.strictEqual(res.wazeOnClusterVersion, '2.9.1');
+  assert.strictEqual(res.clusterRenderVersion, '2.9.4');
+  assert.strictEqual(res.wazeOnClusterVersion, '2.9.2');
   assert.strictEqual(res.robertnWazeAppVersion, '0.6.17');
   assert.strictEqual(fs.readFileSync(path.join(crDir, 'kit', 'yuv_atlas.cpp'), 'utf8'), origAtlas, 'kit/yuv_atlas.cpp must stay untouched for upstream TraceGpu shader hash parity');
   assert.strictEqual(fs.readFileSync(path.join(crDir, 'kit', 'block_pack.cpp'), 'utf8'), origBlock, 'kit/block_pack.cpp must stay untouched for upstream TraceGpu shader hash parity');
@@ -312,7 +312,7 @@ function testFullviewUpstreamPatcherAndExtraCatalog() {
   assert.ok(fs.readFileSync(path.join(crDir, 'src', 'video_layer.h'), 'utf8').includes('masked_quads_'));
   const vlCppOut = fs.readFileSync(path.join(crDir, 'src', 'video_layer.cpp'), 'utf8');
   assert.ok(vlCppOut.includes('if (ma <= 0.002) discard;'));
-  assert.ok(vlCppOut.includes('halfW = 246.0') && vlCppOut.includes('712.0') && vlCppOut.includes('botEnd = mix(640.0, 610.0'));
+  assert.ok(vlCppOut.includes('smin_m') && vlCppOut.includes('808.0 - 191.2') && vlCppOut.includes('browY = 91.0') && vlCppOut.includes('botY = 664.0 - 65.0') && vlCppOut.includes('468.0') && vlCppOut.includes('sdSpd'));
   assert.ok(vlCppOut.includes('VideoLayer::set_mask()'));
   assert.ok(fs.readFileSync(path.join(crDir, 'src', 'compositor.h'), 'utf8').includes('mask_effects()'));
   assert.ok(fs.readFileSync(path.join(crDir, 'src', 'compositor.cpp'), 'utf8').includes('Compositor::mask_effects()'));
@@ -392,14 +392,13 @@ function testOverlayRendererFullviewMapHost() {
   const profile = { kind: 'ice', isPhev: false, isCold: false };
   const model = { units, profile, telemetry: { speedKmh: 62, gear: 3 }, efficiency: {} };
 
-  // 1. Default fullview_dials sends mask_mode: 1 inside native video shader (y=0..642) and auto-enables speed overlay
+  // 1. Default fullview_dials sends mask_mode: 1 inside native video shader (y=0..668) and auto-enables speed overlay
   r.render(model, { enabled: true, clusterSlotMode: 'panel_only', mapHostMode: 'fullview_dials' }, 1000);
   assert.strictEqual(calls.hosts.length, 1);
   assert.strictEqual(calls.hosts[0].into, 'panel');
   assert.deepStrictEqual(calls.hosts[0].opts, {
-    target: 'map', x: 144, y: 0, w: 1632, h: 642, src_x: 0, src_y: 0, src_w: 1088, src_h: 428, shown: 1, mask_mode: 1, mask_feather: 76
+    target: 'map', x: 144, y: 0, w: 1632, h: 668, src_x: 0, src_y: 0, src_w: 1088, src_h: 444, shown: 1, mask_mode: 1, mask_feather: 96
   });
-  assert.ok(calls.hosts[0].opts.y + calls.hosts[0].opts.h < 648, 'FullView host rect must stay strictly above KOMBI4 GEAR_WIN (y>=648)');
   assert.strictEqual(calls.effects.length, 0, 'video-shader cutout must NOT create any separate effect layer');
   assert.strictEqual(r.lastSummary.bezelMaskMode, 'dials');
   assert.strictEqual(r.lastSummary.showClusterSpeed, true, 'speed overlay auto-enables in calibrated fullview_dials mode');
@@ -407,23 +406,54 @@ function testOverlayRendererFullviewMapHost() {
   // 2. Legacy fullview normalizes to fullview_dials (mask_mode: 1) and adjusts tight/wide feathering
   r.render(model, { enabled: true, clusterSlotMode: 'panel_only', mapHostMode: 'fullview', mapBezelFeather: 'tight' }, 1040);
   assert.strictEqual(calls.hosts[calls.hosts.length - 1].opts.mask_mode, 1);
-  assert.strictEqual(calls.hosts[calls.hosts.length - 1].opts.mask_feather, 56);
+  assert.strictEqual(calls.hosts[calls.hosts.length - 1].opts.mask_feather, 68);
   assert.strictEqual(r.lastSummary.hostModeActive, 'fullview_dials');
   assert.strictEqual(r.lastSummary.showClusterSpeed, true);
 
   r.render(model, { enabled: true, clusterSlotMode: 'panel_only', mapHostMode: 'fullview_dials', mapBezelFeather: 'wide' }, 1080);
   assert.strictEqual(calls.hosts[calls.hosts.length - 1].opts.mask_mode, 1);
-  assert.strictEqual(calls.hosts[calls.hosts.length - 1].opts.mask_feather, 104);
+  assert.strictEqual(calls.hosts[calls.hosts.length - 1].opts.mask_feather, 130);
 
-  // 3. Native / legacy center / legacy off modes ALL unhost to slot 0x100 and hide BOTH speed & right_widget
-  const hostsBeforeNative = calls.hosts.length;
-  r.render(model, { enabled: true, clusterSlotMode: 'panel_only', mapHostMode: 'center', clusterSpeedOverlay: 'on' }, 1100);
-  r.render(model, { enabled: true, clusterSlotMode: 'panel_only', mapHostMode: 'native', clusterSpeedOverlay: 'on' }, 1150);
-  r.render(model, { enabled: true, clusterSlotMode: 'panel_only', mapHostMode: 'off', clusterSpeedOverlay: 'on' }, 1200);
-  assert.strictEqual(calls.hosts.length, hostsBeforeNative, 'center/native/off must never host onto panel 0x203 when 0x100 is unlocked');
-  assert.ok(calls.unhosts.length >= 1 && calls.unhosts.every((t) => t === 'map'), 'unhost must follow real ClusterRender.unhost(target) 1-arg signature');
+  // 3. Center Small Map ('native'/'center'/'off') during driving releases panel 0x203 and unhosts back to 0x100
+  // so BMW KOMBI4 restores genuine stock right-wing BC card (slot 0x200), with zero software-redrawn right_widget/speed!
+  r.render(model, { enabled: true, clusterSlotMode: 'panel_only', mapHostMode: 'native', mapBezelFeather: 'tight', clusterSpeedOverlay: 'on' }, 1100);
+  assert.strictEqual(r.lastSummary.nativePanelReleased, true);
+  assert.strictEqual(r.lastSummary.panelAllowed, false);
+  assert.strictEqual(r.lastSummary.hostModeActive, 'native');
+  assert.strictEqual(r.lastSummary.bezelMaskMode, 'off');
   assert.strictEqual(r.lastSummary.showClusterSpeed, false, 'Center Small Map must hide redrawn speed');
-  assert.strictEqual(r.lastSummary.rightWidgetPage, 'off', 'Center Small Map must hide right_widget so stock BC shows');
+  assert.strictEqual(r.lastSummary.rightWidgetPage, 'off', 'Center Small Map must disable software right_widget');
+  assert.ok(calls.unhosts.includes('map'), 'Center Small Map must unhost back to 0x100');
+  for (const lname of ['corner_left', 'corner_right', 'below_speed', 'right_widget', 'speed']) {
+    if (r.layers[lname]) assert.strictEqual(r.layers[lname].visible, false, `${lname} must be hidden when 0x203 is released`);
+  }
+
+  // 3b. Engine-off standby in Center Small Map wakes 0x203 with mask_mode: 3 (still NO software right card or redrawn speed)
+  const standbyModel = { units, profile, telemetry: { speedKmh: 0, rpm: 0, stage: null, navRouteActive: true }, efficiency: {} };
+  r.render(standbyModel, { enabled: true, clusterSlotMode: 'panel_only', mapHostMode: 'native' }, 1150);
+  assert.strictEqual(r.lastSummary.standbyRescue, true);
+  assert.strictEqual(r.lastSummary.panelAllowed, true);
+  assert.strictEqual(r.lastSummary.hostModeActive, 'standby_center');
+  assert.strictEqual(r.lastSummary.bezelMaskMode, 'standby');
+  assert.strictEqual(calls.hosts[calls.hosts.length - 1].opts.mask_mode, 3);
+  assert.strictEqual(r.lastSummary.rightWidgetPage, 'off');
+  assert.strictEqual(r.lastSummary.showClusterSpeed, false);
+
+  // 3c. Engine restarts -> clears standby rescue, releases 0x203, and restores stock 0x200 BC card again
+  const restartModel = { units, profile, telemetry: { speedKmh: 0, rpm: 850, stage: 'D', gear: 1, navRouteActive: true }, efficiency: {} };
+  const unhostBefore = calls.unhosts.length;
+  r.render(restartModel, { enabled: true, clusterSlotMode: 'panel_only', mapHostMode: 'native' }, 1180);
+  assert.strictEqual(r.lastSummary.standbyRescue, false);
+  assert.strictEqual(r.lastSummary.nativePanelReleased, true);
+  assert.strictEqual(r.lastSummary.panelAllowed, false);
+  assert.strictEqual(r.lastSummary.hostModeActive, 'native');
+  assert.strictEqual(r.lastSummary.bezelMaskMode, 'off');
+  assert.ok(calls.unhosts.length > unhostBefore && calls.unhosts[calls.unhosts.length - 1] === 'map');
+
+  // 4. Disabled unhost check
+  r.render(model, { enabled: false, clusterSlotMode: 'panel_only', mapHostMode: 'native' }, 1200);
+  assert.ok(calls.unhosts.length >= 1 && calls.unhosts.every((t) => t === 'map'), 'unhost must follow real ClusterRender.unhost(target) 1-arg signature');
+  assert.strictEqual(r.lastSummary.hostModeActive, 'native');
   assert.strictEqual(calls.effects.length, 0);
 
   // 4. Metric unit inference when car reports Celsius temperature without explicit distance enum
