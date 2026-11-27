@@ -1,8 +1,8 @@
 {
   "id": "id7_cockpit_plus",
   "title": "Cockpit+",
-  "description": "Cockpit+ for BMW iDrive 7 (KOMBI4 + HUD): smooth SDF feathered FullView 1632x668, Center Small Map releasing panel 0x203 for genuine stock right BC card (0x200) with engine-off standby rescue, raised 5AU turn card & ETA pill, and bold HUD navigation",
-  "version": "0.9.13",
+  "description": "Cockpit+ for BMW iDrive 7 (KOMBI4 + HUD): calibrated KOMBI4 bezel SDF FullView with 340/7 halo & custom fade width, symmetric Center Small Map (0x203), Pure Stock 0x100+0x200 mode, smooth BC card cycling, raised 5AU turn card & ETA pill, and bold HUD navigation",
+  "version": "0.9.14",
   "autostart": true,
   "license": "GPL-3.0-only",
   "vendor": "idrive7-cockpit-plus",
@@ -28,7 +28,7 @@
   "iconGlyph": "id7_cockpit_plus",
   "mguHmi": ["ID7"],
   "requires": {
-    "cluster-render": "2.9.4",
+    "cluster-render": "2.9.5",
     "waze-on-cluster": "2.9.2",
     "cockpit-fullview": "1.0.0"
   },
@@ -408,6 +408,7 @@
       "settings": [
         "mapHostMode",
         "mapBezelFeather",
+        "mapBezelFeatherCustomPx",
         "clusterTurnCard",
         "turnCardTriggerM",
         "turnCardPlate",
@@ -1176,15 +1177,19 @@
       "label": "Full-screen CarPlay map host",
       "type": "choice",
       "default": "fullview_dials",
-      "reset": 4,
+      "reset": 5,
       "options": [
         [
           "fullview_dials",
           "FullView Map (alpha cutout, default)"
         ],
         [
+          "center_panel",
+          "Center Small Map (0x203 with widgets & BC)"
+        ],
+        [
           "native",
-          "Center Small Map (native dials & right BC)"
+          "Pure Stock Map (0x100 native dials & stock BC)"
         ]
       ]
     },
@@ -1193,7 +1198,7 @@
       "label": "Bezel fade width",
       "type": "choice",
       "default": "standard",
-      "reset": 3,
+      "reset": 4,
       "options": [
         [
           "standard",
@@ -1206,7 +1211,34 @@
         [
           "wide",
           "Soft 130 px (wider fade)"
+        ],
+        [
+          "custom",
+          "Custom (use pixel setting below)"
         ]
+      ]
+    },
+    {
+      "key": "mapBezelFeatherCustomPx",
+      "label": "Custom map fade width",
+      "type": "number",
+      "unit": "px",
+      "default": 96,
+      "steps": [
+        28,
+        36,
+        44,
+        52,
+        60,
+        68,
+        76,
+        84,
+        96,
+        108,
+        120,
+        130,
+        145,
+        160
       ]
     },
     {

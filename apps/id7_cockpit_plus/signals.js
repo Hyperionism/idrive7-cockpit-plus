@@ -2055,8 +2055,8 @@ class SignalHub {
 
         watch('de.bmw.body.Light', {
             StatusFunctionsIndicators: (v) => this.mediaTracker.feedTurnSignal(v, Date.now()),
-            IndicatorSteeringColumn: (v) => this.mediaTracker.feedStalk(v, Date.now()),
-            IndicatorSteeringColumnComplete: (v) => this.mediaTracker.feedStalk(v, Date.now()),
+            IndicatorSteeringColumn: (v) => this.mediaTracker.feedStalk(v, Date.now(), 'isc'),
+            IndicatorSteeringColumnComplete: (v) => this.mediaTracker.feedStalk(v, Date.now(), 'isc_complete'),
         });
 
         watch('de.bmw.infotainment.vehicle.TPMS', {
