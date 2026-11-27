@@ -144,40 +144,6 @@ const PANEL_ALL_LAYERS = [
     'hv_soc_gauge', 'right_widget', 'speed', 'lane_guidance', 'guidance_turn_card', 'eta_pill',
 ];
 const MAP_LAYER_NAMES = ['map_speed', 'map_left', 'map_right'];
-const BEZEL_MASK_FS = [
-    '#version 100',
-    'precision mediump float;',
-    'varying vec2 v_uv;',
-    'uniform float u_feather;',
-    'uniform float u_mode;',
-    'void main() {',
-    '    float wx = 144.0 + v_uv.x * 1632.0;',
-    '    float wy = v_uv.y * 616.0;',
-    '    float ax = abs(wx - 960.0);',
-    '    float fPx = clamp(u_feather > 1.0 ? u_feather : 54.0, 16.0, 120.0);',
-    '    float botErase = smoothstep(616.0 - max(36.0, fPx * 0.8), 614.0, wy);',
-    '    float eraseA = 0.0;',
-    '    if (u_mode > 0.5) {',
-    '        float halfW = 228.0;',
-    '        if (wy >= 95.0 && wy < 345.0) {',
-    '            halfW = mix(228.0, 355.0, smoothstep(0.0, 1.0, (wy - 95.0) / 250.0));',
-    '        } else if (wy >= 345.0) {',
-    '            halfW = mix(355.0, 245.0, smoothstep(0.0, 1.0, clamp((wy - 345.0) / 263.0, 0.0, 1.0)));',
-    '        }',
-    '        float sideErase = smoothstep(halfW - fPx, halfW, ax);',
-    '        float topErase = 1.0 - smoothstep(0.0, 14.0, wy);',
-    '        eraseA = max(max(sideErase, botErase), topErase);',
-    '    } else {',
-    '        float nx = ax / 800.0;',
-    '        float ny = (wy - 308.0) / 308.0;',
-    '        float dOuter = pow(pow(max(nx, 0.0001), 3.2) + pow(max(abs(ny), 0.0001), 3.2), 1.0 / 3.2);',
-    '        float fNorm = clamp(fPx / 800.0, 0.03, 0.14);',
-    '        float outerErase = smoothstep(1.0 - fNorm, 1.0, dOuter);',
-    '        eraseA = max(outerErase, botErase);',
-    '    }',
-    '    gl_FragColor = vec4(0.0, 0.0, 0.0, clamp(eraseA, 0.0, 1.0));',
-    '}',
-].join('\n');
 
 const COL = {
     clear: [0, 0, 0, 0],
@@ -635,13 +601,12 @@ class OverlayRenderer {
         this.hostConfigKey = '';
         this.hostModeActive = 'native';
         this.crHostLayers = false;
+        this.crHostMask = false;
         this.crRenderState = false;
         this.hostingState = '';
         this.hostingReason = '';
         this.mapHostedInto = '';
         this.wazeStatus = null;
-        this.bezelMaskRef = null;
-        this.bezelMaskVisible = false;
         this.bezelMaskMode = 'off';
         this.lastSummary = {};
     }
@@ -685,71 +650,33 @@ class OverlayRenderer {
         const cleanMode = mode === 'fullview_dials'
             ? 'fullview_dials'
             : (mode === 'fullview' ? 'fullview' : 'native');
-        // Never cover native KOMBI4 dials in fullview_dials without DstOut alpha cutout support.
-        const effectiveMode = (cleanMode === 'fullview_dials' && this.ready && !this.crRenderState)
+        // Never cover native KOMBI4 dials in fullview_dials without native video-shader cutout support (cluster-render >= 2.9.1).
+        const effectiveMode = (cleanMode === 'fullview_dials' && this.ready && !this.crHostMask)
             ? 'native'
             : cleanMode;
         this.hostModeActive = effectiveMode;
 
         const wantsHost = effectiveMode === 'fullview_dials' || effectiveMode === 'fullview';
-        const hostLive = this.isMapHostedLive();
-        const wantMask = effectiveMode === 'fullview_dials' || (effectiveMode === 'fullview' && Boolean(maskOn));
-        const showMask = wantsHost && wantMask && hostLive && this.crRenderState;
         const featherPx = featherMode === 'tight' ? 36 : (featherMode === 'wide' ? 80 : 54);
-        this.bezelMaskMode = showMask ? (effectiveMode === 'fullview_dials' ? 'dials' : 'bezel') : 'off';
+        const maskModeNum = (wantsHost && this.crHostMask)
+            ? (effectiveMode === 'fullview_dials' ? 1 : (maskOn ? 2 : 0))
+            : 0;
+        this.bezelMaskMode = maskModeNum === 1 ? 'dials' : (maskModeNum === 2 ? 'bezel' : 'off');
         if (!this.cr) return;
 
-        const key = effectiveMode + '|' + (showMask ? '1' : '0') + '|' + featherPx + '|' +
-            (hostLive ? '1' : '0') + '|' + (this.crRenderState ? '1' : '0');
+        const key = effectiveMode + '|' + maskModeNum + '|' + featherPx + '|' + (this.crHostMask ? '1' : '0');
         if (key === this.hostConfigKey) return;
         this.hostConfigKey = key;
 
         if (wantsHost) {
             if (typeof this.cr.host === 'function') {
-                this.cr.host('panel', this._fullviewHostRect());
+                const hostOpts = maskModeNum > 0
+                    ? Object.assign(this._fullviewHostRect(), { mask_mode: maskModeNum, mask_feather: featherPx })
+                    : this._fullviewHostRect();
+                this.cr.host('panel', hostOpts);
             }
-            if (showMask && typeof this.cr.effect === 'function') {
-                if (!this.bezelMaskRef) {
-                    this.bezelMaskRef = this.cr.effect({
-                        target: 'panel',
-                        klass: 'overlay',
-                        z: 2,
-                        x: 144,
-                        y: 0,
-                        w: 1632,
-                        h: 616,
-                        visible: true,
-                        fs: BEZEL_MASK_FS,
-                        blend: 'alpha',
-                        blend_src: 'zero',
-                        blend_dst: 'one_minus_src_alpha',
-                        blend_src_alpha: 'zero',
-                        blend_dst_alpha: 'one_minus_src_alpha',
-                        blend_op: 'add',
-                        blend_op_alpha: 'add',
-                        color_mask: 'rgba',
-                    });
-                    this.bezelMaskVisible = true;
-                } else if (!this.bezelMaskVisible && typeof this.cr.set === 'function') {
-                    this.cr.set(this.bezelMaskRef, { visible: true });
-                    this.bezelMaskVisible = true;
-                }
-                if (this.bezelMaskRef && typeof this.cr.uniform === 'function') {
-                    this.cr.uniform(this.bezelMaskRef, 'u_feather', [featherPx]);
-                    this.cr.uniform(this.bezelMaskRef, 'u_mode', [effectiveMode === 'fullview_dials' ? 1 : 0]);
-                }
-            } else if (this.bezelMaskRef && this.bezelMaskVisible && typeof this.cr.set === 'function') {
-                this.cr.set(this.bezelMaskRef, { visible: false });
-                this.bezelMaskVisible = false;
-            }
-        } else {
-            if (typeof this.cr.unhost === 'function') {
-                this.cr.unhost('map');
-            }
-            if (this.bezelMaskRef && this.bezelMaskVisible && typeof this.cr.set === 'function') {
-                this.cr.set(this.bezelMaskRef, { visible: false });
-                this.bezelMaskVisible = false;
-            }
+        } else if (typeof this.cr.unhost === 'function') {
+            this.cr.unhost('map');
         }
     }
 
@@ -868,13 +795,14 @@ class OverlayRenderer {
             this.connected = true;
             this.targets = cr.targets || '';
             this.crHostLayers = Boolean(cr.hostLayers);
+            this.crHostMask = Boolean(cr.hostMask);
             this.crRenderState = Boolean(cr.renderState);
             this.hostConfigKey = '';
             const keys = Object.keys(this.layers);
             for (let i = 0; i < keys.length; i++) {
                 this.layers[keys[i]].prevBuf = null;
             }
-            this.log.info('cluster-render ready (panelSlot=' + this.slotStatus.panelSlot + ', canPanel=' + this.canUsePanel() + ', hostLayers=' + this.crHostLayers + ', renderState=' + this.crRenderState + ')');
+            this.log.info('cluster-render ready (panelSlot=' + this.slotStatus.panelSlot + ', canPanel=' + this.canUsePanel() + ', hostLayers=' + this.crHostLayers + ', hostMask=' + this.crHostMask + ')');
         });
         cr.on('hosting', (target, ev) => {
             if (target !== 'map') return;
@@ -891,6 +819,7 @@ class OverlayRenderer {
             this.ready = false;
             this.connected = false;
             this.crHostLayers = false;
+            this.crHostMask = false;
             this.crRenderState = false;
             this.hostingState = '';
             this.hostingReason = '';
@@ -992,7 +921,11 @@ class OverlayRenderer {
         const cornerLeftMode = s.cornerLeftDisplay || 'oil_cool';
         const hvSocGaugeEnabled = s.hvSocGauge !== false;
         const cabinTempEnabled = s.cabinTempDisplay !== false;
-        const clusterSpeedEnabled = s.clusterSpeedOverlay !== false && layoutState.widgets.speed.enabled !== false;
+        const speedMode = s.clusterSpeedOverlay;
+        const speedSettingOn = (speedMode === false || speedMode === 'off')
+            ? false
+            : ((speedMode === true || speedMode === 'on') ? true : (this.hostModeActive === 'fullview'));
+        const clusterSpeedEnabled = speedSettingOn && layoutState.widgets.speed.enabled !== false;
         const clusterLaneEnabled = s.clusterLaneBar !== false && layoutState.widgets.lane_guidance.enabled !== false;
         const clusterTurnCardEnabled = s.clusterTurnCard !== false && layoutState.widgets.guidance_turn_card.enabled !== false;
         const clusterEtaEnabled = s.clusterEtaPill !== false && layoutState.widgets.eta_pill.enabled !== false;
@@ -1216,6 +1149,7 @@ class OverlayRenderer {
             showClusterSpeed, showClusterLaneBar, showClusterTurnCard, showClusterEtaPill, turnDistMeters,
             hostModeActive: this.hostModeActive,
             crHostLayers: this.crHostLayers,
+            crHostMask: this.crHostMask,
             crRenderState: this.crRenderState,
             bezelMaskMode: this.bezelMaskMode,
             hostingState: this.hostingState,
@@ -2674,13 +2608,12 @@ class OverlayRenderer {
         this.hostConfigKey = '';
         this.hostModeActive = 'native';
         this.crHostLayers = false;
+        this.crHostMask = false;
         this.crRenderState = false;
         this.hostingState = '';
         this.hostingReason = '';
         this.mapHostedInto = '';
         this.wazeStatus = null;
-        this.bezelMaskRef = null;
-        this.bezelMaskVisible = false;
         this.bezelMaskMode = 'off';
         this.lastHudNavKey = '';
         this.lastHudRoadKey = '';

@@ -456,7 +456,7 @@ mgu.run({
             if (settings.get('clusterLaneBar') !== false) clusExtras.push('5AU');
             if (settings.get('clusterTurnCard') !== false) clusExtras.push(tr('Turn'));
             if (settings.get('clusterEtaPill') !== false) clusExtras.push('ETA');
-            if (settings.get('clusterSpeedOverlay') !== false) clusExtras.push(tr('Spd'));
+            if (sum.showClusterSpeed) clusExtras.push(tr('Spd'));
             if (settings.get('cabinTempDisplay') !== false) clusExtras.push(tr('Cabin'));
             if (settings.get('hvSocGauge') !== false && model.profile.vehicleType === 'phev') clusExtras.push('HV%');
             const clusLine = (settings.get('clusterSlotMode') === 'map_only' ? tr('Map 0x100') : tr('Full Panel')) +
@@ -500,13 +500,14 @@ mgu.run({
                     ? 'Vector Sans'
                     : ('Ubuntu' + (fSt.error ? ' (' + fSt.error + ')' : '')));
             const refusedNote = renderer.refused.length ? (' | Refused: ' + renderer.refused[renderer.refused.length - 1]) : '';
+            const hostStateWord = sum.hostingState === 'live' ? 'active' : sum.hostingState;
             const hostTag = !sum.crHostLayers
                 ? 'host=no-host-layers'
-                : (sum.hostingState
-                    ? ('host=' + sum.hostingState + (sum.hostingReason ? '(' + sum.hostingReason + ')' : ''))
+                : (hostStateWord
+                    ? ('host=' + hostStateWord + (sum.hostingReason ? '(' + sum.hostingReason + ')' : ''))
                     : ('host=' + (sum.hostModeActive || 'native')));
             const maskTag = (sum.crHostLayers && sum.hostModeActive && sum.hostModeActive !== 'native')
-                ? (' mask=' + (sum.bezelMaskMode || 'off') + (sum.crRenderState ? '' : '(rs=0)'))
+                ? (' mask=' + (sum.bezelMaskMode || 'off') + (sum.crHostMask ? '(shader)' : '(hm=0)'))
                 : '';
             const wocTag = sum.wazeStatus
                 ? ('woc=' + (sum.wazeStatus.state || '?') + '@' + (sum.wazeStatus.target || '?') + (sum.wazeStatus.error ? '(' + sum.wazeStatus.error + ')' : ''))
