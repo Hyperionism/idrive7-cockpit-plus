@@ -264,6 +264,7 @@ function testFullviewUpstreamPatcherAndExtraCatalog() {
     '    }',
     '    return true;',
     '}',
+    '    blocks_shown_ = parked_ = false;',
     '    if (edge_.on() && drawn_params().rect != edge_at_) {   /* the edge\'s quads and blur follow the rect */',
     '        drop_edge_quads();',
     '        make_edge_quads();',
@@ -314,7 +315,9 @@ function testFullviewUpstreamPatcherAndExtraCatalog() {
   assert.ok(fs.readFileSync(path.join(crDir, 'kit', 'yuv_atlas.cpp'), 'utf8').includes('if (ma <= 0.002) discard;'));
   assert.ok(fs.readFileSync(path.join(crDir, 'kit', 'block_pack.cpp'), 'utf8').includes('u_opacity * ma'));
   assert.ok(fs.readFileSync(path.join(crDir, 'src', 'video_layer.h'), 'utf8').includes('has_mask()'));
+  assert.ok(fs.readFileSync(path.join(crDir, 'src', 'video_layer.h'), 'utf8').includes('mask_set_'));
   assert.ok(fs.readFileSync(path.join(crDir, 'src', 'video_layer.cpp'), 'utf8').includes('VideoLayer::set_mask()'));
+  assert.ok(fs.readFileSync(path.join(crDir, 'src', 'video_layer.cpp'), 'utf8').includes('(!edge_.has_mask() && !mask_set_)'));
   assert.ok(fs.readFileSync(path.join(crDir, 'src', 'compositor.cpp'), 'utf8').includes('h.edge.any()'));
   assert.ok(fs.readFileSync(path.join(crDir, 'src', 'server.cpp'), 'utf8').includes('"host_mask"'));
   assert.strictEqual(JSON.parse(fs.readFileSync(path.join(crDir, 'component.json'), 'utf8')).uninstallable, true);
