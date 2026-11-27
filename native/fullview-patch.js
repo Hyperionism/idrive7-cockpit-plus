@@ -102,7 +102,7 @@ function patchIdriveApps(rootDir) {
         "            ? '/var/opt/waze-on-cluster/current/waze-on-cluster.conf'",
         "            : '/var/opt/waze-on-cluster/waze-on-cluster.conf';",
         "        if (fs.existsSync(cf) && /^\\s*tex_size\\s*=\\s*1632x720\\b/m.test(fs.readFileSync(cf, 'utf8'))) {",
-        "            return ['--res', '1632x720', '--safe', '690x490+380+110'];",
+        "            return ['--res', '1632x720', '--safe', '840x570+396+40'];",
         '        }',
         '    } catch (e) {}',
         '    return [];',
@@ -118,7 +118,44 @@ function patchIdriveApps(rootDir) {
       "    var args = ['--panel', panel, '--coding', CODING].concat(unproven ? ['--unproven'] : []).concat(panel === 'high' ? cockpitFullviewResArgs() : []);",
       'patch/patchd.js args'
     );
+    if (patchd.indexOf('var keep = rec && rec.enabled === true && Array.isArray(rec.args) && rec.args.length ? rec.args : null;') !== -1) {
+      patchd = replaceExactOrThrow(
+        patchd,
+        'var keep = rec && rec.enabled === true && Array.isArray(rec.args) && rec.args.length ? rec.args : null;',
+        "var keep = rec && rec.enabled === true && Array.isArray(rec.args) && rec.args.length ? rec.args.map(function (a) { return a === '690x490+380+110' ? '840x570+396+40' : a; }) : null;",
+        'patch/patchd.js keep migration'
+      );
+    }
     fs.writeFileSync(patchdPath, patchd, 'utf8');
+  }
+
+  // 4b. Patch carplay_locate.js so ShowUI requests pure map-only mode (maps:/car/instrumentcluster/map, itemType 1)
+  // on the head unit when tex_size = 1632x720, suppressing Apple Maps' duplicate grey turn card & ETA pill
+  // while leaving host unit tests (where /var/opt/waze-on-cluster is absent) on stock ?showETA=yes.
+  const locatePath = path.join(wocDir, 'patch', 'carplay_locate.js');
+  if (fs.existsSync(locatePath)) {
+    let loc = fs.readFileSync(locatePath, 'utf8');
+    if (loc.indexOf('COCKPIT_MAP_ONLY_SHOWUI') === -1) {
+      loc = replaceExactOrThrow(
+        loc,
+        "var SHOWUI_URL = ALT_URL + '?showETA=yes';",
+        [
+          'var COCKPIT_MAP_ONLY_SHOWUI = (function () {',
+          '    try {',
+          "        var _fs = require('fs');",
+          "        var cf = _fs.existsSync('/var/opt/waze-on-cluster/current/waze-on-cluster.conf')",
+          "            ? '/var/opt/waze-on-cluster/current/waze-on-cluster.conf'",
+          "            : '/var/opt/waze-on-cluster/waze-on-cluster.conf';",
+          "        return _fs.existsSync(cf) && /^\\s*tex_size\\s*=\\s*1632x720\\b/m.test(_fs.readFileSync(cf, 'utf8'));",
+          '    } catch (e) { return false; }',
+          '})();',
+          '/* COCKPIT_MAP_ONLY_SHOWUI */',
+          "var SHOWUI_URL = COCKPIT_MAP_ONLY_SHOWUI ? (ALT_URL + '/map') : (ALT_URL + '?showETA=yes');"
+        ].join('\n'),
+        'patch/carplay_locate.js'
+      );
+      fs.writeFileSync(locatePath, loc, 'utf8');
+    }
   }
 
   // 5. Bump waze-on-cluster SemVer (> 2.0.29 forks), ensure uninstallable & align app release/UI
@@ -140,7 +177,7 @@ function patchIdriveApps(rootDir) {
     fs.writeFileSync(wocRelPath, JSON.stringify(wocRel, null, 2) + '\n', 'utf8');
   }
 
-  // 6. Patch Maps on cluster UI (_outdated) so 1632x720 + 690x490+380+110 shows "Patched" instead of "Update needed"
+  // 6. Patch Maps on cluster UI (_outdated) so 1632x720 + 840x570+396+40 shows "Patched" instead of "Update needed"
   const wocCtrlPath = path.join(wocAppDir, 'src', 'waze_cluster_control.js');
   if (fs.existsSync(wocCtrlPath)) {
     let wocCtrl = fs.readFileSync(wocCtrlPath, 'utf8');
@@ -148,7 +185,7 @@ function patchIdriveApps(rootDir) {
       wocCtrl = replaceExactOrThrow(
         wocCtrl,
         "(ps.res && ps.res !== SIZE) || (ps.safe && ps.safe !== SAFE) || ps.mapurl === 'no-eta'",
-        "(ps.res && ps.res !== SIZE && ps.res !== '1632x720') || (ps.safe && ps.safe !== SAFE && ps.safe !== '690x490+380+110') || ps.mapurl === 'no-eta'",
+        "(ps.res && ps.res !== SIZE && ps.res !== '1632x720') || (ps.safe && ps.safe !== SAFE && ps.safe !== '840x570+396+40') || ps.mapurl === 'no-eta'",
         'apps/robertn_waze_cluster/src/waze_cluster_control.js'
       );
       fs.writeFileSync(wocCtrlPath, wocCtrl, 'utf8');
