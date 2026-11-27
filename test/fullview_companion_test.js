@@ -187,30 +187,10 @@ function testFullviewUpstreamPatcherAndExtraCatalog() {
 
   fs.writeFileSync(path.join(crDir, 'kit', 'map_geometry.h'), 'constexpr uint32_t kMapAreaWidth = 1088;\nconstexpr uint32_t kMapAreaHeight = 480;\n', 'utf8');
   fs.writeFileSync(path.join(crDir, 'kit', 'map_geometry.cpp'), 'if (tex_w > kMapAreaWidth || tex_h > kMapAreaHeight)\n        return "texture larger than the 1088x480 map area";\n', 'utf8');
-  fs.writeFileSync(path.join(crDir, 'kit', 'yuv_atlas.cpp'), [
-    'const char *const kAtlasFragmentShader = R"(#version 100',
-    'precision highp float;',
-    'uniform sampler2D u_image;',
-    'uniform vec2 u_size;',
-    'uniform float u_opacity;',
-    'varying vec2 v_uv;',
-    'void main() {',
-    '    vec3 rgb = vec3(y + 1.402 * v, y - 0.344136 * u - 0.714136 * v, y + 1.772 * u);',
-    '    gl_FragColor = vec4(clamp(rgb, 0.0, 1.0), u_opacity);',
-    '})";'
-  ].join('\n'), 'utf8');
-  fs.writeFileSync(path.join(crDir, 'kit', 'block_pack.cpp'), [
-    'const char *const kBlockFragmentShader = R"(#version 100',
-    'precision highp float;',
-    'uniform sampler2D u_image;',
-    'uniform vec2 u_size;',
-    'uniform float u_opacity;',
-    'varying vec2 v_uv;',
-    'void main() {',
-    '    vec3 c = sel < 0.5 ? c0 : sel < 1.5 ? c1 : sel < 2.5 ? (2.0 * c0 + c1) / 3.0 : (c0 + 2.0 * c1) / 3.0;',
-    '    gl_FragColor = vec4(c, u_opacity);',
-    '})";'
-  ].join('\n'), 'utf8');
+  const origAtlas = 'const char *const kAtlasFragmentShader = R"(#version 100\nvoid main() { gl_FragColor = vec4(1.0); })";\n';
+  const origBlock = 'const char *const kBlockFragmentShader = R"(#version 100\nvoid main() { gl_FragColor = vec4(1.0); })";\n';
+  fs.writeFileSync(path.join(crDir, 'kit', 'yuv_atlas.cpp'), origAtlas, 'utf8');
+  fs.writeFileSync(path.join(crDir, 'kit', 'block_pack.cpp'), origBlock, 'utf8');
   fs.writeFileSync(path.join(crDir, 'src', 'video_layer.h'), [
     'struct VideoEdge {',
     '    uint32_t top = 0, bottom = 0, fade = 0, dim = 0, blur = 0;',
@@ -221,10 +201,14 @@ function testFullviewUpstreamPatcherAndExtraCatalog() {
     '    }',
     '    bool operator!=(const VideoEdge &o) const { return !(*this == o); }',
     '};',
+    'extern const char *const kEdgeAtlasFragmentShader;',
+    'extern const char *const kEdgeBlockFragmentShader;',
+    'bool set_edge(const VideoEdge &e, int atlas_effect, int block_effect);',
     '    void make_edge_quads();',
     '    void drop_edge_quads();'
   ].join('\n'), 'utf8');
   fs.writeFileSync(path.join(crDir, 'src', 'video_layer.cpp'), [
+    'VideoLayer::VideoLayer(uint32_t id, int target, uint64_t seq, crk::UploadPacer &pacer, int atlas_effect,',
     'if (g_ && s.drawn && opaque_ && s.opacity * s.fade >= 1.0f && !s.turned)',
     'bool VideoLayer::make_atlas_quads(Graph *g)',
     '{',
@@ -271,9 +255,19 @@ function testFullviewUpstreamPatcherAndExtraCatalog() {
     '    }',
     '    set_opacity();'
   ].join('\n'), 'utf8');
+  fs.writeFileSync(path.join(crDir, 'src', 'compositor.h'), [
+    '    int edge_fx_[2] = {0, 0};   /* kEdgeAtlasFragmentShader, kEdgeBlockFragmentShader; 0: no edges */',
+    '    bool edge_tried_ = false;',
+    '    bool edge_effects();'
+  ].join('\n'), 'utf8');
   fs.writeFileSync(path.join(crDir, 'src', 'compositor.cpp'), [
+    '    for (int fx : edge_fx_)',
+    '        if (fx) gpu_->drop_effect(fx);',
+    '    return edge_fx_[0] != 0;',
+    '}',
     '                if (ed.on() && !edge_effects())',
     '                    ed = VideoEdge();',
+    '                if (static_cast<VideoLayer *>(e.layer.get())->set_edge(ed, edge_fx_[0], edge_fx_[1])) {',
     'if (!h.shown || !h.edge.on() || x0 < h.rect.x',
     'return lh && lh->host.edge.on() ? clamped(lh->host.edge) : VideoEdge();'
   ].join('\n'), 'utf8');
@@ -312,12 +306,14 @@ function testFullviewUpstreamPatcherAndExtraCatalog() {
   assert.strictEqual(res.clusterRenderVersion, '2.9.1');
   assert.strictEqual(res.wazeOnClusterVersion, '2.9.0');
   assert.strictEqual(res.robertnWazeAppVersion, '0.6.17');
-  assert.ok(fs.readFileSync(path.join(crDir, 'kit', 'yuv_atlas.cpp'), 'utf8').includes('if (ma <= 0.002) discard;'));
-  assert.ok(fs.readFileSync(path.join(crDir, 'kit', 'block_pack.cpp'), 'utf8').includes('u_opacity * ma'));
-  assert.ok(fs.readFileSync(path.join(crDir, 'src', 'video_layer.h'), 'utf8').includes('has_mask()'));
-  assert.ok(fs.readFileSync(path.join(crDir, 'src', 'video_layer.h'), 'utf8').includes('mask_set_'));
+  assert.strictEqual(fs.readFileSync(path.join(crDir, 'kit', 'yuv_atlas.cpp'), 'utf8'), origAtlas, 'kit/yuv_atlas.cpp must stay untouched for upstream TraceGpu shader hash parity');
+  assert.strictEqual(fs.readFileSync(path.join(crDir, 'kit', 'block_pack.cpp'), 'utf8'), origBlock, 'kit/block_pack.cpp must stay untouched for upstream TraceGpu shader hash parity');
+  assert.ok(fs.readFileSync(path.join(crDir, 'src', 'video_layer.h'), 'utf8').includes('kMaskAtlasFragmentShader'));
+  assert.ok(fs.readFileSync(path.join(crDir, 'src', 'video_layer.h'), 'utf8').includes('masked_quads_'));
+  assert.ok(fs.readFileSync(path.join(crDir, 'src', 'video_layer.cpp'), 'utf8').includes('if (ma <= 0.002) discard;'));
   assert.ok(fs.readFileSync(path.join(crDir, 'src', 'video_layer.cpp'), 'utf8').includes('VideoLayer::set_mask()'));
-  assert.ok(fs.readFileSync(path.join(crDir, 'src', 'video_layer.cpp'), 'utf8').includes('(!edge_.has_mask() && !mask_set_)'));
+  assert.ok(fs.readFileSync(path.join(crDir, 'src', 'compositor.h'), 'utf8').includes('mask_effects()'));
+  assert.ok(fs.readFileSync(path.join(crDir, 'src', 'compositor.cpp'), 'utf8').includes('Compositor::mask_effects()'));
   assert.ok(fs.readFileSync(path.join(crDir, 'src', 'compositor.cpp'), 'utf8').includes('h.edge.any()'));
   assert.ok(fs.readFileSync(path.join(crDir, 'src', 'server.cpp'), 'utf8').includes('"host_mask"'));
   assert.strictEqual(JSON.parse(fs.readFileSync(path.join(crDir, 'component.json'), 'utf8')).uninstallable, true);
