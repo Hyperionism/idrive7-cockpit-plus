@@ -150,6 +150,8 @@
   "Bottom arrival ETA capsule": "底部预计到达 ETA 胶囊",
   "ETA capsule background": "ETA 胶囊底板",
   "Frameless digital speed overlay": "居中无框数字车速显示",
+  "Auto (Wide mode only, avoids double speed)": "自动 (仅宽幅覆盖表盘模式显示)",
+  "Always show": "始终显示",
   "Speed overlay background": "数字车速底板",
   "Translucent glass": "半透明底板",
   "Frameless (no background)": "无底板",
