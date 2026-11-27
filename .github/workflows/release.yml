@@ -134,7 +134,9 @@ jobs:
           TAG="${{ steps.meta.outputs.tag }}"
           VER="${{ steps.meta.outputs.version }}"
           ASSETS=(dist/*.tgz dist/*.png dist/mgu-store.json dist/catalog.json)
-          NOTES="Cockpit+ v${VER} full open-source FullView 1632x720 suite for BMW iDrive 7 (cluster-render 2.9.0 + waze-on-cluster 2.9.0 + robertn_waze_cluster 0.6.17 + mgu-render 0.6.26 + cockpit-fullview 1.0.0 + id7_cockpit_plus ${VER}). Zero paid components required."
+          CR_VER=$(node -e "console.log(require('./native/fullview-patch.js').UPSTREAM_PINS.clusterRenderVersion)")
+          WOC_VER=$(node -e "console.log(require('./native/fullview-patch.js').UPSTREAM_PINS.wazeOnClusterVersion)")
+          NOTES="Cockpit+ v${VER} full open-source FullView 1632x720 suite for BMW iDrive 7 (cluster-render ${CR_VER} + waze-on-cluster ${WOC_VER} + robertn_waze_cluster 0.6.17 + mgu-render 0.6.26 + cockpit-fullview 1.0.0 + id7_cockpit_plus ${VER}). Zero paid components required."
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "${ASSETS[@]}" --clobber
           else
