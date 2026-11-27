@@ -312,13 +312,10 @@ mgu.run({
             lastPanelModeVis = isPanel;
             const panelOnlyComps = [
                 'BTN_COCKPIT_NAV',
-                'BTN_LAYOUT_POS',
                 'SET_WIDGETMEDIA',
                 'SET_WIDGETTRIP',
                 'SET_WIDGETTPMS',
                 'WIDGET_CHARGING',
-                'SET_CABINTEMPDISPLAY',
-                'SET_HVSOCGAUGE',
             ];
             for (let i = 0; i < panelOnlyComps.length; i++) {
                 ui.visible(panelOnlyComps[i], isPanel);
@@ -334,8 +331,7 @@ mgu.run({
         }
 
         const POS_TARGETS = {
-            turn_card:     { label: 'Center iOS turn card',   xKey: 'turnCardNudgeX',     yKey: 'turnCardNudgeY',     minX: -520, maxX: 520, minY: -110, maxY: 440 },
-            lane_bar:      { label: '5AU top lane bar',       xKey: 'laneBarNudgeX',      yKey: 'laneBarNudgeY',      minX: -520, maxX: 520, minY: -20,  maxY: 500 },
+            turn_card:     { label: 'Top-center iOS turn card', xKey: 'turnCardNudgeX',     yKey: 'turnCardNudgeY',     minX: -520, maxX: 520, minY: -18,  maxY: 500 },
             eta_pill:      { label: 'Bottom ETA capsule',     xKey: 'etaPillNudgeX',      yKey: 'etaPillNudgeY',      minX: -520, maxX: 520, minY: -580, maxY: 40  },
             speed_overlay: { label: 'Digital speed overlay',  xKey: 'speedOverlayNudgeX', yKey: 'speedOverlayNudgeY', minX: -300, maxX: 960, minY: -300, maxY: 220 },
             cluster_all:   { label: 'Cluster outer readouts', xKey: 'clusterNudgeX',      yKey: 'clusterNudgeY',      minX: -12,  maxX: 12,  minY: -12,  maxY: 12  },
@@ -453,13 +449,12 @@ mgu.run({
             if (settings.get('widgetTpms') !== false) rwParts.push(tr('Tires'));
             if (sum.isCharging) rwParts.push(tr('Charging'));
             const clusExtras = [];
-            if (settings.get('clusterLaneBar') !== false) clusExtras.push('5AU');
             if (settings.get('clusterTurnCard') !== false) clusExtras.push(tr('Turn'));
             if (settings.get('clusterEtaPill') !== false) clusExtras.push('ETA');
             if (sum.showClusterSpeed) clusExtras.push(tr('Spd'));
             if (settings.get('cabinTempDisplay') !== false) clusExtras.push(tr('Cabin'));
             if (settings.get('hvSocGauge') !== false && model.profile.vehicleType === 'phev') clusExtras.push('HV%');
-            const clusLine = (settings.get('clusterSlotMode') === 'map_only' ? tr('Map 0x100') : tr('Full Panel')) +
+            const clusLine = (settings.get('clusterSlotMode') === 'map_only' ? tr('Outer Vitals') : tr('Full Panel')) +
                 '  |  ' + tr('Widgets') + ': ' + (rwParts.length ? rwParts.join('+') : tr('Off')) +
                 (clusExtras.length ? ('  |  +' + clusExtras.join('/')) : '') +
                 '  |  ' + tr('Gear') + ': ' + (settings.get('gearDisplay') || 'next_to_d');
@@ -521,7 +516,7 @@ mgu.run({
 
             const hn = t.hudNav || {};
             const navModeLabel = settings.get('hudNavMode') || 'own_nav_minimap';
-            const cockpitNavNote = (sum.showClusterLaneBar ? ' | 5AU:On' : '') +
+            const cockpitNavNote = (sum.standbyRescue ? ' | Standby:On' : '') +
                 (sum.showClusterTurnCard ? ' | Card:On' : '') +
                 (sum.showClusterEtaPill ? ' | ETA:On' : '') +
                 (typeof sum.turnDistMeters === 'number' ? (' | Turn:' + sum.turnDistMeters + 'm') : '') +

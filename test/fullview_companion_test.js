@@ -138,8 +138,8 @@ function testActivateNoOpWhenWazeAbsent() {
 
 function testAppRequiresAndSchema2Catalog() {
   const appJson = JSON.parse(fs.readFileSync(path.join(ROOT, 'apps', 'id7_cockpit_plus', 'app.json'), 'utf8'));
-  assert.strictEqual(appJson.requires['cluster-render'], '2.9.1');
-  assert.strictEqual(appJson.requires['waze-on-cluster'], '2.9.0');
+  assert.strictEqual(appJson.requires['cluster-render'], '2.9.2');
+  assert.strictEqual(appJson.requires['waze-on-cluster'], '2.9.1');
   assert.strictEqual(appJson.requires['cockpit-fullview'], '1.0.0');
 
   const dryRes = childProcess.execFileSync(
@@ -281,7 +281,7 @@ function testFullviewUpstreamPatcherAndExtraCatalog() {
     '    h.edge.blur = (uint32_t)ev[4];'
   ].join('\n'), 'utf8');
   fs.writeFileSync(path.join(crDir, 'component.json'), JSON.stringify({ id: 'cluster-render', kind: 'tool', version: '0.8.13' }), 'utf8');
-  fs.writeFileSync(path.join(wocDir, 'waze-on-cluster.conf'), 'tex_size = 1088x480\nhosted_vpp_scale = 0\n', 'utf8');
+  fs.writeFileSync(path.join(wocDir, 'waze-on-cluster.conf'), 'tex_size = 1088x480\nhosted_vpp_scale = 0\nalways_packed = 0\nidle_ms = 60000\nstall_ms = 6000\n', 'utf8');
   fs.writeFileSync(
     path.join(wocDir, 'patch', 'patchd.js'),
     "function planArgs(panel, mode, unproven) {\n    var args = ['--panel', panel, '--coding', CODING].concat(unproven ? ['--unproven'] : []);\n    return args;\n}\nvar keep = rec && rec.enabled === true && Array.isArray(rec.args) && rec.args.length ? rec.args : null;\n",
@@ -303,15 +303,17 @@ function testFullviewUpstreamPatcherAndExtraCatalog() {
   );
 
   const res = patchIdriveApps(idriveRoot);
-  assert.strictEqual(res.clusterRenderVersion, '2.9.1');
-  assert.strictEqual(res.wazeOnClusterVersion, '2.9.0');
+  assert.strictEqual(res.clusterRenderVersion, '2.9.2');
+  assert.strictEqual(res.wazeOnClusterVersion, '2.9.1');
   assert.strictEqual(res.robertnWazeAppVersion, '0.6.17');
   assert.strictEqual(fs.readFileSync(path.join(crDir, 'kit', 'yuv_atlas.cpp'), 'utf8'), origAtlas, 'kit/yuv_atlas.cpp must stay untouched for upstream TraceGpu shader hash parity');
   assert.strictEqual(fs.readFileSync(path.join(crDir, 'kit', 'block_pack.cpp'), 'utf8'), origBlock, 'kit/block_pack.cpp must stay untouched for upstream TraceGpu shader hash parity');
   assert.ok(fs.readFileSync(path.join(crDir, 'src', 'video_layer.h'), 'utf8').includes('kMaskAtlasFragmentShader'));
   assert.ok(fs.readFileSync(path.join(crDir, 'src', 'video_layer.h'), 'utf8').includes('masked_quads_'));
-  assert.ok(fs.readFileSync(path.join(crDir, 'src', 'video_layer.cpp'), 'utf8').includes('if (ma <= 0.002) discard;'));
-  assert.ok(fs.readFileSync(path.join(crDir, 'src', 'video_layer.cpp'), 'utf8').includes('VideoLayer::set_mask()'));
+  const vlCppOut = fs.readFileSync(path.join(crDir, 'src', 'video_layer.cpp'), 'utf8');
+  assert.ok(vlCppOut.includes('if (ma <= 0.002) discard;'));
+  assert.ok(vlCppOut.includes('halfW = 246.0') && vlCppOut.includes('712.0') && vlCppOut.includes('botEnd = mix(640.0, 610.0'));
+  assert.ok(vlCppOut.includes('VideoLayer::set_mask()'));
   assert.ok(fs.readFileSync(path.join(crDir, 'src', 'compositor.h'), 'utf8').includes('mask_effects()'));
   assert.ok(fs.readFileSync(path.join(crDir, 'src', 'compositor.cpp'), 'utf8').includes('Compositor::mask_effects()'));
   assert.ok(fs.readFileSync(path.join(crDir, 'src', 'compositor.cpp'), 'utf8').includes('h.edge.any()'));
@@ -326,7 +328,10 @@ function testFullviewUpstreamPatcherAndExtraCatalog() {
   assert.ok(fs.readFileSync(path.join(crDir, 'kit', 'map_geometry.h'), 'utf8').includes('kMaxMapTexWidth = 1632'));
   assert.ok(fs.readFileSync(path.join(crDir, 'kit', 'map_geometry.cpp'), 'utf8').includes('tex_h > kMaxMapTexHeight'));
   assert.ok(/^\s*tex_size\s*=\s*1632x720\s*$/m.test(fs.readFileSync(path.join(wocDir, 'waze-on-cluster.conf'), 'utf8')));
+  assert.ok(/^\s*idle_ms\s*=\s*600000\s*$/m.test(fs.readFileSync(path.join(wocDir, 'waze-on-cluster.conf'), 'utf8')));
+  assert.ok(/^\s*stall_ms\s*=\s*60000\s*$/m.test(fs.readFileSync(path.join(wocDir, 'waze-on-cluster.conf'), 'utf8')));
   assert.ok(/^\s*hosted_vpp_scale\s*=\s*0\s*$/m.test(fs.readFileSync(path.join(wocDir, 'waze-on-cluster.conf'), 'utf8')));
+  assert.ok(/^\s*always_packed\s*=\s*0\s*$/m.test(fs.readFileSync(path.join(wocDir, 'waze-on-cluster.conf'), 'utf8')));
   assert.ok(fs.readFileSync(path.join(wocDir, 'patch', 'patchd.js'), 'utf8').includes('cockpitFullviewResArgs'));
   assert.ok(fs.readFileSync(path.join(wocDir, 'patch', 'carplay_locate.js'), 'utf8').includes("ALT_URL + '/map'"));
 
@@ -387,42 +392,38 @@ function testOverlayRendererFullviewMapHost() {
   const profile = { kind: 'ice', isPhev: false, isCold: false };
   const model = { units, profile, telemetry: { speedKmh: 62, gear: 3 }, efficiency: {} };
 
-  // 1. Default fullview_dials sends mask_mode: 1 inside native video shader (zero separate effect layers) and auto-hides speed overlay
+  // 1. Default fullview_dials sends mask_mode: 1 inside native video shader (y=0..642) and auto-enables speed overlay
   r.render(model, { enabled: true, clusterSlotMode: 'panel_only', mapHostMode: 'fullview_dials' }, 1000);
   assert.strictEqual(calls.hosts.length, 1);
   assert.strictEqual(calls.hosts[0].into, 'panel');
   assert.deepStrictEqual(calls.hosts[0].opts, {
-    target: 'map', x: 144, y: 0, w: 1632, h: 616, src_x: 0, src_y: 0, src_w: 1088, src_h: 410, shown: 1, mask_mode: 1, mask_feather: 54
+    target: 'map', x: 144, y: 0, w: 1632, h: 642, src_x: 0, src_y: 0, src_w: 1088, src_h: 428, shown: 1, mask_mode: 1, mask_feather: 76
   });
   assert.ok(calls.hosts[0].opts.y + calls.hosts[0].opts.h < 648, 'FullView host rect must stay strictly above KOMBI4 GEAR_WIN (y>=648)');
   assert.strictEqual(calls.effects.length, 0, 'video-shader cutout must NOT create any separate effect layer');
   assert.strictEqual(r.lastSummary.bezelMaskMode, 'dials');
-  assert.strictEqual(r.lastSummary.showClusterSpeed, false, 'speed overlay auto-hides when native dials are visible');
+  assert.strictEqual(r.lastSummary.showClusterSpeed, true, 'speed overlay auto-enables in calibrated fullview_dials mode');
 
-  // 2. Switch to FullView Wide + transparent curved bezel cutout -> mask_mode: 2 and feather adjusts tight/wide, speed auto-enables
-  r.render(model, { enabled: true, clusterSlotMode: 'panel_only', mapHostMode: 'fullview', mapBezelMask: true, mapBezelFeather: 'tight' }, 1040);
-  assert.strictEqual(calls.hosts[calls.hosts.length - 1].opts.mask_mode, 2);
-  assert.strictEqual(calls.hosts[calls.hosts.length - 1].opts.mask_feather, 36);
-  assert.strictEqual(r.lastSummary.bezelMaskMode, 'bezel');
-  assert.strictEqual(r.lastSummary.showClusterSpeed, true, 'speed overlay auto-enables in FullView Wide mode');
+  // 2. Legacy fullview normalizes to fullview_dials (mask_mode: 1) and adjusts tight/wide feathering
+  r.render(model, { enabled: true, clusterSlotMode: 'panel_only', mapHostMode: 'fullview', mapBezelFeather: 'tight' }, 1040);
+  assert.strictEqual(calls.hosts[calls.hosts.length - 1].opts.mask_mode, 1);
+  assert.strictEqual(calls.hosts[calls.hosts.length - 1].opts.mask_feather, 56);
+  assert.strictEqual(r.lastSummary.hostModeActive, 'fullview_dials');
+  assert.strictEqual(r.lastSummary.showClusterSpeed, true);
 
-  r.render(model, { enabled: true, clusterSlotMode: 'panel_only', mapHostMode: 'fullview', mapBezelMask: true, mapBezelFeather: 'wide' }, 1080);
-  assert.strictEqual(calls.hosts[calls.hosts.length - 1].opts.mask_mode, 2);
-  assert.strictEqual(calls.hosts[calls.hosts.length - 1].opts.mask_feather, 80);
+  r.render(model, { enabled: true, clusterSlotMode: 'panel_only', mapHostMode: 'fullview_dials', mapBezelFeather: 'wide' }, 1080);
+  assert.strictEqual(calls.hosts[calls.hosts.length - 1].opts.mask_mode, 1);
+  assert.strictEqual(calls.hosts[calls.hosts.length - 1].opts.mask_feather, 104);
 
-  // 3. Explicit mapBezelMask: false in fullview wide mode omits mask_mode
-  r.render(model, { enabled: true, clusterSlotMode: 'panel_only', mapHostMode: 'fullview', mapBezelMask: false }, 1090);
-  assert.strictEqual(calls.hosts[calls.hosts.length - 1].opts.mask_mode, undefined);
-  assert.strictEqual(r.lastSummary.bezelMaskMode, 'off');
-
-  // 4. Native / legacy center / legacy off modes ALL unhost to slot 0x100 (behind dials, zero occlusion) and auto-hide speed
+  // 3. Native / legacy center / legacy off modes ALL unhost to slot 0x100 and hide BOTH speed & right_widget
   const hostsBeforeNative = calls.hosts.length;
-  r.render(model, { enabled: true, clusterSlotMode: 'panel_only', mapHostMode: 'center', mapBezelMask: true }, 1100);
-  r.render(model, { enabled: true, clusterSlotMode: 'panel_only', mapHostMode: 'native', mapBezelMask: true }, 1150);
-  r.render(model, { enabled: true, clusterSlotMode: 'panel_only', mapHostMode: 'off' }, 1200);
-  assert.strictEqual(calls.hosts.length, hostsBeforeNative, 'center/native/off must never host onto panel 0x203');
+  r.render(model, { enabled: true, clusterSlotMode: 'panel_only', mapHostMode: 'center', clusterSpeedOverlay: 'on' }, 1100);
+  r.render(model, { enabled: true, clusterSlotMode: 'panel_only', mapHostMode: 'native', clusterSpeedOverlay: 'on' }, 1150);
+  r.render(model, { enabled: true, clusterSlotMode: 'panel_only', mapHostMode: 'off', clusterSpeedOverlay: 'on' }, 1200);
+  assert.strictEqual(calls.hosts.length, hostsBeforeNative, 'center/native/off must never host onto panel 0x203 when 0x100 is unlocked');
   assert.ok(calls.unhosts.length >= 1 && calls.unhosts.every((t) => t === 'map'), 'unhost must follow real ClusterRender.unhost(target) 1-arg signature');
-  assert.strictEqual(r.lastSummary.showClusterSpeed, false);
+  assert.strictEqual(r.lastSummary.showClusterSpeed, false, 'Center Small Map must hide redrawn speed');
+  assert.strictEqual(r.lastSummary.rightWidgetPage, 'off', 'Center Small Map must hide right_widget so stock BC shows');
   assert.strictEqual(calls.effects.length, 0);
 
   // 4. Metric unit inference when car reports Celsius temperature without explicit distance enum
@@ -471,10 +472,12 @@ function testClusterWidgetPlateToggles() {
   }
 
   // 1. Default plate configuration: speed frameless, nav widgets natural smoked glass (neutral RGB, zero blue border)
-  r.render(model, { enabled: true, clusterSlotMode: 'panel_only', clusterSpeedOverlay: 'on' }, 2000);
+  r.render(model, { enabled: true, clusterSlotMode: 'panel_only', mapHostMode: 'fullview_dials', clusterSpeedOverlay: 'on' }, 2000);
   assert.strictEqual(r.layers.guidance_turn_card.visible, true, 'turn card must read maneuver from hn.show when hn.guide is provider string');
+  assert.strictEqual(r.layers.guidance_turn_card.rect.y, 18, 'turn card relocated into 5AU top-center pocket');
+  assert.strictEqual(r.layers.lane_guidance, undefined, 'cluster lane_guidance layer must be removed (stock OEM cluster lanes used)');
   assert.strictEqual(pxAt(r.layers.speed.cv, 24, 10)[3], 0, 'speed default frameless body sample must be transparent');
-  for (const name of ['lane_guidance', 'guidance_turn_card', 'eta_pill']) {
+  for (const name of ['guidance_turn_card', 'eta_pill']) {
     const cv = r.layers[name].cv;
     const p = pxAt(cv, 24, 10);
     assert.ok(p[3] >= 140, `${name} glass plate must be visible at interior corner (got alpha=${p[3]})`);
@@ -485,15 +488,15 @@ function testClusterWidgetPlateToggles() {
   r.render(model, {
     enabled: true,
     clusterSlotMode: 'panel_only',
+    mapHostMode: 'fullview_dials',
     clusterSpeedOverlay: 'on',
     speedPlate: 'glass',
-    laneBarPlate: 'none',
     turnCardPlate: 'none',
     etaPillPlate: 'none'
   }, 2100);
   const spGlass = pxAt(r.layers.speed.cv, 24, 10);
   assert.ok(spGlass[3] >= 140 && Math.abs(spGlass[2] - spGlass[0]) <= 12, 'speed glass plate must render cleanly with neutral fill');
-  for (const name of ['lane_guidance', 'guidance_turn_card', 'eta_pill']) {
+  for (const name of ['guidance_turn_card', 'eta_pill']) {
     const cv = r.layers[name].cv;
     assert.strictEqual(pxAt(cv, 24, 10)[3], 0, `${name} frameless background sample must be transparent`);
     assert.ok(countNonZero(cv) > 200, `${name} frameless mode must still render foreground glyphs`);

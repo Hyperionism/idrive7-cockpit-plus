@@ -41,7 +41,7 @@ const { EfficiencyTracker } = require(path.join(APP_DIR, 'efficiency'));
 const { VehicleProfile, coldRevCeilingRpm, detectAnomaly } = require(path.join(APP_DIR, 'vehicle_profile'));
 const {
     OverlayRenderer, inspectClusterSlotConfig, resolveCornerRightMode, formatLeadHeadwayParts, cabinHvacPalette, CLUSTER_LAYER_NAMES,
-    RIGHT_WIDGET_BASE, SPEED_BASE, LANE_GUIDANCE_BASE, TURN_CARD_BASE, ETA_PILL_BASE,
+    RIGHT_WIDGET_BASE, SPEED_BASE, TURN_CARD_BASE, ETA_PILL_BASE,
 } = require(path.join(APP_DIR, 'overlay_renderer'));
 const { ClusterRender } = require(VENDOR_FILES['./cluster_render_client']);
 const {
@@ -711,7 +711,7 @@ function inBox(x, y, box) {
         rDefault.render(modelA, { enabled: true, gearDisplay: 'next_to_d' }, 5000);
         await wait(60);
 
-        assert.strictEqual(recorded.layers.filter((l) => l.target === 'panel' && (!l.kind || l.kind === 'image')).length, 7, 'default PHEV panel_only in dials/native mode must activate 5 outer zones + hv_soc_gauge + right_widget (auto-hiding speed overlay to avoid double 00)');
+        assert.strictEqual(recorded.layers.filter((l) => l.target === 'panel' && (!l.kind || l.kind === 'image')).length, 7, 'when crHostMask is absent, fullview_dials falls back to native and activates 5 outer zones + hv_soc_gauge + right_widget (auto-hiding speed)');
         assert.strictEqual(recorded.layers.some((l) => l.target === 'panel' && l.kind === 'effect'), false, 'must never create blackening overlay effect layers');
         assert(rDefault.layerCount() <= 16);
         assert(rDefault.pixelBytesTotal() < 3.5 * 1024 * 1024);
@@ -733,48 +733,34 @@ function inBox(x, y, box) {
         assert.strictEqual(rDefault.lastSummary.clusterSlotMode, 'panel_only');
         assert.strictEqual(rDefault.lastSummary.panelAllowed, true, 'panel_only must stay consistently on 0x203');
 
-        // Phase A2: Explicit 'map_only' mode unmaps 0x203 and activates borderless side-bottom map layers with zero shifting!
+        // Phase A2: Explicit 'map_only' (Outer Vitals Only) mode KEEPS outer vitals on 0x203 in original positions,
+        // hides right_widget/speed & unhosts map so stock right BC widget & native center map remain visible!
         modelA.telemetry.oilTempC = 78;
         modelA.telemetry.coolantTempC = 86;
         modelA.telemetry.stage = 'P';
         modelA.telemetry.gear = null;
         rDefault.render(modelA, { enabled: true, clusterSlotMode: 'map_only', gearDisplay: 'next_to_d' }, 6100);
         await wait(40);
-        assert.strictEqual(rDefault.lastSummary.panelAllowed, false, 'map_only must unmap 0x203');
-        assert.strictEqual(rDefault.lastSummary.showMapOverlay, true, 'map_only must activate map_speed + map_left + map_right on 0x100');
-        assert.strictEqual(rDefault.layers.below_speed.visible, false);
+        assert.strictEqual(rDefault.lastSummary.panelAllowed, true, 'map_only with safe 0x203 keeps outer vitals on panel 0x203');
+        assert.strictEqual(rDefault.lastSummary.showMapOverlay, false, 'map_only must NOT squeeze outer vitals into 0x100 center map');
+        assert.strictEqual(rDefault.lastSummary.rightWidgetPage, 'off', 'map_only must hide right_widget for stock BC');
+        assert.strictEqual(rDefault.lastSummary.showClusterSpeed, false, 'map_only must hide redrawn speed for stock center dial');
+        assert.strictEqual(rDefault.layers.below_speed.visible, true);
+        assert.strictEqual(rDefault.layers.corner_left.visible, true);
+        assert.strictEqual(rDefault.layers.corner_right.visible, true);
         assert.strictEqual(rDefault.layers.right_widget.visible, false);
-        assert.strictEqual(rDefault.layers.map_speed.visible, true);
-        assert.strictEqual(rDefault.layers.map_left.visible, true);
-        assert.strictEqual(rDefault.layers.map_right.visible, true);
-        assert(rDefault.layers.map_right.rect.x - (rDefault.layers.map_left.rect.x + rDefault.layers.map_left.rect.w) >= 310,
-            'center route corridor must remain >= 310px unobstructed');
-        assert.strictEqual(rDefault.layers.map_left.cv.d[(2 * rDefault.layers.map_left.rect.w + 2) * 4 + 3], 0,
-            'map_left must be borderless (no shaded box)');
-        assert.strictEqual(rDefault.layers.map_right.cv.d[(2 * rDefault.layers.map_right.rect.w + 2) * 4 + 3], 0,
-            'map_right must be borderless (no shaded box)');
-
-        const parkedLeftBuf = Buffer.from(rDefault.layers.map_left.cv.d);
-        const mrW = rDefault.layers.map_right.rect.w;
-        const mrH = rDefault.layers.map_right.rect.h;
-        const extractSocRegion = (buf) => {
-            const sub = [];
-            for (let py = 28; py < mrH; py++) {
-                const off = (py * mrW + 96) * 4;
-                sub.push(Buffer.from(buf.slice(off, (py * mrW + mrW) * 4)));
-            }
-            return Buffer.concat(sub);
-        };
-        const parkedSocRegion = extractSocRegion(rDefault.layers.map_right.cv.d);
+        assert(!rDefault.layers.speed || !rDefault.layers.speed.visible, 'map_only must keep speed layer hidden');
+        assert(!rDefault.layers.map_speed || !rDefault.layers.map_speed.visible);
+        assert(!rDefault.layers.map_left || !rDefault.layers.map_left.visible);
+        assert(!rDefault.layers.map_right || !rDefault.layers.map_right.visible);
 
         modelA.telemetry.stage = 'D';
         modelA.telemetry.gear = 5;
         rDefault.render(modelA, { enabled: true, clusterSlotMode: 'map_only', gearDisplay: 'next_to_d' }, 6200);
         await wait(30);
-        assert.strictEqual(Buffer.compare(parkedLeftBuf, Buffer.from(rDefault.layers.map_left.cv.d)), 0,
-            'map_left OIL/CL must NOT shift by a single pixel between Park and D5');
-        assert.strictEqual(Buffer.compare(parkedSocRegion, extractSocRegion(rDefault.layers.map_right.cv.d)), 0,
-            'map_right SOC % must NOT shift by a single pixel when D5 and brake segments appear');
+        assert.strictEqual(rDefault.layers.brake_rail.visible, true, 'outer brake_rail remains active in D under map_only mode');
+        assert.strictEqual(rDefault.layers.gear_d.visible, true, 'outer gear_d remains active in D under map_only mode');
+        assert.strictEqual(rDefault.layers.corner_left.rect.x, 8, 'outer corner_left stays in original rim position');
 
         // Phase A3: HUD navigation auto-yield -> active route unmaps hud_main (0x323) so KOMBI4 restores BMW HUD directions (0x300)
         modelA.telemetry.navRouteActive = true;
@@ -3040,19 +3026,22 @@ function inBox(x, y, box) {
         assert.strictEqual(r.lastSummary.showBelowSpeed, false);
         assert.strictEqual(r.layers.hud_main.visible, true, 'disabling cluster below_speed must not hide HUD');
 
-        // Also hides map_speed in map_only mode (both from scratch and after previously enabled over Waze map)
+        // Also hides map_speed in legacy 0x202 conflict fallback mode
+        const tmpConf27 = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-conf27-'));
+        fs.writeFileSync(path.join(tmpConf27, 'cluster-render.local.conf'), 'panel_slot = 0x202\n');
         const tmpWaze = path.join(os.tmpdir(), 'cm-waze-test27-' + process.pid + '.json');
         fs.writeFileSync(tmpWaze, JSON.stringify({ state: 'showing', target: 'map' }));
-        const rMap = new OverlayRenderer({ allowPanel: true, wazeStatusPath: tmpWaze });
-        rMap.render(m, { enabled: true, clusterSlotMode: 'map_only', belowSpeedLine1: 'efficiency', belowSpeedLine2: 'power', gearDisplay: 'next_to_d' }, 5300);
+        const rMap = new OverlayRenderer({ allowPanel: false, confDir: tmpConf27, wazeStatusPath: tmpWaze });
+        rMap.render(m, { enabled: true, belowSpeedLine1: 'efficiency', belowSpeedLine2: 'power', gearDisplay: 'next_to_d' }, 5300);
         assert.strictEqual(rMap.layers.map_speed.visible, true);
-        rMap.render(m, { enabled: true, clusterSlotMode: 'map_only', belowSpeedLine1: 'off', belowSpeedLine2: 'off', gearDisplay: 'next_to_d' }, 5350);
-        assert.strictEqual(rMap.layers.map_speed.visible, false, 'both lines OFF must also hide map_speed in map_only mode');
+        rMap.render(m, { enabled: true, belowSpeedLine1: 'off', belowSpeedLine2: 'off', gearDisplay: 'next_to_d' }, 5350);
+        assert.strictEqual(rMap.layers.map_speed.visible, false, 'both lines OFF must also hide map_speed in 0x202 fallback mode');
         fs.unlinkSync(tmpWaze);
+        fs.rmSync(tmpConf27, { recursive: true, force: true });
     });
 
-    /* 28. Cockpit+ 5AU Lane Guidance, Centered iOS Turn Card, Bottom ETA Pill, Frameless Speed & Locked Right Wing */
-    await test('Cockpit+ 5AU lanes, centered iOS turn card (<=350m trigger + clearance), bottom ETA pill & locked right_widget', () => {
+    /* 28. Cockpit+ 5AU-Pocket iOS Turn Card, Bottom ETA Pill, Frameless Speed, HUD Lanes Kept & Locked Right Wing */
+    await test('Cockpit+ 5AU-pocket iOS turn card (<=350m trigger + clearance), bottom ETA pill, HUD lanes kept & locked right_widget', () => {
         const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cockpit-plus-ui-'));
         const layoutPath = path.join(tmpDir, 'cockpit_layout.json');
         const crFile = path.join(tmpDir, 'cr_status.txt');
@@ -3103,12 +3092,8 @@ function inBox(x, y, box) {
         const settings = { enabled: true, hudNavMode: 'own_nav_minimap', turnCardTriggerM: '350', clusterSpeedOverlay: 'on' };
         r.render(model, settings, 1200);
 
-        // Verify 5AU lane strip & ETA pill active; turn card waiting (>350m / no turn); speed frameless
-        assert.strictEqual(r.layers.lane_guidance.visible, true, '5AU top lane strip must show even without HUD turn maneuver');
-        assert.strictEqual(r.layers.lane_guidance.rect.x, 760);
-        assert.strictEqual(r.layers.lane_guidance.rect.y, 20);
-        assert(r.layers.lane_guidance.rect.x > 722 && (r.layers.lane_guidance.rect.x + r.layers.lane_guidance.rect.w) < 1198,
-            '5AU lane bar must fit cleanly between left ring (<=722) and right redline (>=1198)');
+        // Verify cluster lane_guidance is removed (stock OEM cluster lanes used) while ETA pill & speed work cleanly
+        assert.strictEqual(r.layers.lane_guidance, undefined, 'cluster lane_guidance must not be created');
         assert.strictEqual(r.layers.eta_pill.visible, true);
         assert.strictEqual(r.layers.eta_pill.rect.x, 760);
         assert.strictEqual(r.layers.eta_pill.rect.y, 648);
@@ -3122,11 +3107,10 @@ function inBox(x, y, box) {
             for (let i = 3; i < cv.d.length; i += 4) if (cv.d[i] > 140) n++;
             return n;
         };
-        assert(countOpaque(r.layers.lane_guidance.cv) > 200, 'lane_guidance must render lane arrows');
         assert(countOpaque(r.layers.eta_pill.cv) > 200, 'eta_pill must render CJK arrival ETA');
         assert(countOpaque(r.layers.speed.cv) > 150, 'speed overlay must render digits');
 
-        // 2. Feed maneuver at 600m -> still > 350m threshold -> turn card stays hidden
+        // 2. Feed maneuver at 600m -> still > 350m threshold -> turn card stays hidden; HUD lanes + nav still render cleanly!
         nt.feedEvents({
             GuidanceEventListError: 'NO_ERROR',
             viewContent: [{ eventsInView: [{ intersection: { direction: 'LEFT', formattedDistance: { distance: '600', unit: 'METER' }, description: { elements: [{ text: '\u4e2d\u5c71\u4e1c\u4e00\u8def' }] } } }] }],
@@ -3138,8 +3122,9 @@ function inBox(x, y, box) {
         assert.strictEqual(model.telemetry.hudNav.show.road, '\u4e2d\u5c71\u4e1c\u4e00\u8def');
         r.render(model, settings, 1550);
         assert(!r.layers.guidance_turn_card || !r.layers.guidance_turn_card.visible, 'turn card at 600m must not appear before 350m trigger');
+        assert.strictEqual(r.layers.hud_nav.visible, true, 'HUD vector nav & lanes must stay active');
 
-        // 3. Distance drops to 220m <= 350m -> centered iOS turn card triggers cleanly with zero right_widget overlap!
+        // 3. Distance drops to 220m <= 350m -> iOS turn card triggers cleanly in 5AU top-center pocket (760, 18)!
         nt.feedField('guidance', 'nextIntersection', { distance: { distance: '220', unit: 'METER' } }, 2000);
         model.telemetry.hudNav = nt.snapshot(wallNow + 800, 2050, 480);
         r.render(model, settings, 2050);
@@ -3147,7 +3132,10 @@ function inBox(x, y, box) {
         const tc = r.layers.guidance_turn_card;
         const rw = r.layers.right_widget;
         assert.strictEqual(tc.rect.x, 760);
-        assert.strictEqual(tc.rect.y, 110);
+        assert.strictEqual(tc.rect.y, 18);
+        assert.strictEqual(tc.rect.w, 400);
+        assert.strictEqual(tc.rect.h, 96);
+        assert(tc.rect.x > 722 && (tc.rect.x + tc.rect.w) < 1198, '5AU turn card must sit cleanly between left ring (<=722) and right redline (>=1198)');
         assert(tc.rect.x + tc.rect.w + 80 <= rw.rect.x, 'turn card must leave >=80px gap left of right_widget (x=1244)');
         assert(countOpaque(tc.cv) > 300, 'turn card must draw vector arrow + distance + CJK street name');
         // Verify real maneuver arrow + live distance ('220 m') rendered rather than fallback dot/'--'
@@ -3172,7 +3160,6 @@ function inBox(x, y, box) {
         assert.strictEqual(model.telemetry.hudNav.routeActive, false);
         assert.strictEqual(model.telemetry.hudNav.eta, null);
         r.render(model, settings, 6050);
-        assert.strictEqual(r.layers.lane_guidance.visible, false, 'lane_guidance must hide immediately on route end');
         assert.strictEqual(r.layers.guidance_turn_card.visible, false, 'turn card must hide immediately on route end');
         assert.strictEqual(r.layers.eta_pill.visible, false, 'eta_pill must hide immediately on route end');
 
@@ -3189,7 +3176,6 @@ function inBox(x, y, box) {
         fs.writeFileSync(layoutPath, JSON.stringify({
             widgets: {
                 right_widget: { x: 100, y: 100, w: 200, h: 200 },
-                lane_guidance: { x: 740, y: 36 },
                 guidance_turn_card: { x: 730, y: 140 },
                 eta_pill: { x: 745, y: 632 },
                 speed: { x: 380, y: 315 },
@@ -3201,8 +3187,6 @@ function inBox(x, y, box) {
         assert.strictEqual(r.layers.right_widget.rect.x, RIGHT_WIDGET_BASE.x, 'right_widget MUST stay locked against layout overrides');
         assert.strictEqual(r.layers.right_widget.rect.y, RIGHT_WIDGET_BASE.y);
         assert.strictEqual(r.layers.right_widget.rect.w, RIGHT_WIDGET_BASE.w);
-        assert.strictEqual(r.layers.lane_guidance.rect.x, 740);
-        assert.strictEqual(r.layers.lane_guidance.rect.y, 36);
         assert.strictEqual(r.layers.guidance_turn_card.rect.x, 730);
         assert.strictEqual(r.layers.guidance_turn_card.rect.y, 140);
         assert.strictEqual(r.layers.eta_pill.rect.x, 745);
@@ -3224,8 +3208,8 @@ function inBox(x, y, box) {
         assert.strictEqual(appSpec.id, 'id7_cockpit_plus');
         assert.strictEqual(appSpec.title, 'Cockpit+');
         assert.strictEqual(appSpec.loggingId, 'OA7C');
-        assert.strictEqual(appSpec.requires && appSpec.requires['cluster-render'], '2.9.1');
-        assert.strictEqual(appSpec.requires && appSpec.requires['waze-on-cluster'], '2.9.0');
+        assert.strictEqual(appSpec.requires && appSpec.requires['cluster-render'], '2.9.2');
+        assert.strictEqual(appSpec.requires && appSpec.requires['waze-on-cluster'], '2.9.1');
         assert.strictEqual(appSpec.requires && appSpec.requires['cockpit-fullview'], '1.0.0');
         assert(!appSpec.npmFiles, 'jpeg_decoder.js must be bundled directly without npmFiles');
         assert(fs.existsSync(path.join(APP_DIR, 'jpeg_decoder.js')));
@@ -3367,11 +3351,13 @@ function inBox(x, y, box) {
 
         // 1. Modern cluster-render 2.9.1+ (host_layers: 1, host_mask: 1)
         const env1 = makeMockCR({ host_layers: 1, host_mask: 1, render_state: 1 });
-        const r1 = new OverlayRenderer({ ClusterRender: env1.MockCR, confDir, wazeStatusPath: wazeFile, allowPanel: true });
+        const crStatFile = path.join(tmpDir, 'cr-status.txt');
+        fs.writeFileSync(crStatFile, '');
+        const r1 = new OverlayRenderer({ ClusterRender: env1.MockCR, confDir, crStatusPath: crStatFile, wazeStatusPath: wazeFile, allowPanel: true });
         r1.connect();
         await wait(50);
 
-        // 1a. Default fullview_dials -> hosts 1632x616 with mask_mode=1, mask_feather=54, ZERO effect layers, speed hidden (auto)
+        // 1a. Default fullview_dials -> hosts 1632x642 with mask_mode=1, mask_feather=76, ZERO effect layers, speed ON (auto)
         r1.render(model, { enabled: true }, 1000);
         await wait(50);
 
@@ -3379,41 +3365,70 @@ function inBox(x, y, box) {
         assert(hostOps1.length >= 1, 'fullview_dials must host map on panel');
         const lastHost1 = hostOps1[hostOps1.length - 1];
         assert.deepStrictEqual({ into: lastHost1.into, x: lastHost1.x, y: lastHost1.y, w: lastHost1.w, h: lastHost1.h, mask_mode: lastHost1.mask_mode, mask_feather: lastHost1.mask_feather }, {
-            into: 'panel', x: 144, y: 0, w: 1632, h: 616, mask_mode: 1, mask_feather: 54,
+            into: 'panel', x: 144, y: 0, w: 1632, h: 642, mask_mode: 1, mask_feather: 76,
         });
         assert.strictEqual(env1.ops.some((o) => o.op === 'layer' && o.kind === 'effect'), false, 'must NEVER create separate effect mask layer');
         assert.strictEqual(r1.lastSummary.bezelMaskMode, 'dials');
-        assert.strictEqual(r1.lastSummary.showClusterSpeed, false, 'speed overlay must auto-hide when native dials are visible');
+        assert.strictEqual(r1.lastSummary.showClusterSpeed, true, 'speed overlay auto-enables in calibrated fullview_dials mode');
 
-        // 1b. Switch to fullview wide + bezel cutout ON -> mask_mode = 2, and speed overlay auto-enables
-        r1.render(model, { enabled: true, mapHostMode: 'fullview', mapBezelMask: true }, 1600);
+        // 1b. Legacy fullview normalizes to fullview_dials (mask_mode = 1, feather tight = 56)
+        r1.render(model, { enabled: true, mapHostMode: 'fullview', mapBezelFeather: 'tight' }, 1600);
         await wait(50);
         const hostOps2 = env1.ops.filter((o) => o.op === 'host');
         const lastHost2 = hostOps2[hostOps2.length - 1];
-        assert.strictEqual(lastHost2.mask_mode, 2);
-        assert.strictEqual(lastHost2.mask_feather, 54);
-        assert.strictEqual(r1.lastSummary.bezelMaskMode, 'bezel');
-        assert.strictEqual(r1.lastSummary.showClusterSpeed, true, 'speed overlay must auto-enable in fullview wide mode');
+        assert.strictEqual(lastHost2.mask_mode, 1);
+        assert.strictEqual(lastHost2.mask_feather, 56);
+        assert.strictEqual(r1.lastSummary.hostModeActive, 'fullview_dials');
+        assert.strictEqual(r1.lastSummary.showClusterSpeed, true);
 
-        // 1c. Switch to fullview wide + bezel cutout OFF -> mask_mode omitted (0)
-        r1.render(model, { enabled: true, mapHostMode: 'fullview', mapBezelMask: false }, 1900);
+        // 1c. Feather wide = 104
+        r1.render(model, { enabled: true, mapHostMode: 'fullview_dials', mapBezelFeather: 'wide' }, 1900);
         await wait(50);
         const hostOps3 = env1.ops.filter((o) => o.op === 'host');
         const lastHost3 = hostOps3[hostOps3.length - 1];
-        assert.strictEqual(lastHost3.mask_mode, undefined);
-        assert.strictEqual(r1.lastSummary.bezelMaskMode, 'off');
+        assert.strictEqual(lastHost3.mask_mode, 1);
+        assert.strictEqual(lastHost3.mask_feather, 104);
 
-        // 1d. Native / legacy center / legacy off must ALL unhost map (0x100 behind dials), NEVER host at 416,120, and auto-hide speed
+        // 1d. Native / legacy center / legacy off must ALL unhost map (0x100 behind dials) and hide BOTH speed & right_widget
         const beforeNativeHostCount = env1.ops.filter((o) => o.op === 'host').length;
         for (const mMode of ['native', 'center', 'off']) {
-            r1.render(model, { enabled: true, mapHostMode: mMode }, 2200);
+            r1.render(model, { enabled: true, mapHostMode: mMode, clusterSpeedOverlay: 'on' }, 2200);
             await wait(30);
             assert.strictEqual(r1.lastSummary.hostModeActive, 'native', 'legacy/native mode ' + mMode + ' must resolve to native');
-            assert.strictEqual(r1.lastSummary.showClusterSpeed, false, 'native mode must auto-hide digital speed overlay');
+            assert.strictEqual(r1.lastSummary.showClusterSpeed, false, 'Center Small Map must hide redrawn speed');
+            assert.strictEqual(r1.lastSummary.rightWidgetPage, 'off', 'Center Small Map must hide right_widget for stock BC');
         }
-        assert.strictEqual(env1.ops.filter((o) => o.op === 'host').length, beforeNativeHostCount, 'native/center/off must NEVER call cr.host');
+        assert.strictEqual(env1.ops.filter((o) => o.op === 'host').length, beforeNativeHostCount, 'native/center/off must NEVER call cr.host while 0x100 is unlocked');
         assert(env1.ops.some((o) => o.op === 'unhost' && o.target === 'map'), 'native/center must call unhost("map")');
         assert.strictEqual(env1.ops.some((o) => o.op === 'host' && o.x === 416 && o.y === 120), false, 'center must never host onto panel 0x203');
+
+        // 1e. Engine-off Standby Map Rescue in Center Small Map (native) mode:
+        // When KOMBI4 locks slot 0x100 while ignition is off during active routing, cr emits target('map','waiting','','slot locked'),
+        // and OverlayRenderer automatically hosts map onto panel 0x203 with mask_mode=2 (standby center corridor),
+        // keeping stock speed & right BC uncovered, then unhosts cleanly once driving/0x100 resumes!
+        r1.cr.emit('target', 'map', 'waiting', '', 'slot locked', false, false);
+        const standbyModel = Object.assign({}, model, {
+            telemetry: { speedKmh: 0, rpm: 0, stage: 'P', program: 'D', gear: 0, navRouteActive: true, navHasLanes: false },
+        });
+        r1.render(standbyModel, { enabled: true, mapHostMode: 'native' }, 3100);
+        await wait(50);
+        const standbyHost = env1.ops.filter((o) => o.op === 'host').pop();
+        assert.strictEqual(r1.lastSummary.standbyRescue, true, 'locked 0x100 during routing must trigger standby map rescue');
+        assert.strictEqual(r1.lastSummary.hostModeActive, 'standby_center');
+        assert.strictEqual(r1.lastSummary.bezelMaskMode, 'standby');
+        assert.strictEqual(standbyHost.mask_mode, 2, 'standby center rescue must send mask_mode=2');
+        assert.strictEqual(r1.lastSummary.showClusterSpeed, false, 'standby center rescue keeps stock speed visible');
+        assert.strictEqual(r1.lastSummary.rightWidgetPage, 'off', 'standby center rescue keeps stock right BC visible');
+
+        // Engine restarts & slot 0x100 unlocks -> automatically unhosts back to native 0x100
+        r1.cr.emit('target', 'map', 'shown', 'waze-on-cluster', '', false, false);
+        const drivingModel = Object.assign({}, model, {
+            telemetry: { speedKmh: 0, rpm: 850, stage: 'D', program: 'D', gear: 1, navRouteActive: true, navHasLanes: false },
+        });
+        r1.render(drivingModel, { enabled: true, mapHostMode: 'native' }, 3600);
+        await wait(50);
+        assert.strictEqual(r1.lastSummary.standbyRescue, false, 'unlocking 0x100 / engine start must clear standby rescue');
+        assert.strictEqual(r1.lastSummary.hostModeActive, 'native');
 
         r1.close();
         env1.closeServer();

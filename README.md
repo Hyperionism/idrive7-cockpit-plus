@@ -12,7 +12,7 @@
 ## 简体中文
 
 > [!NOTE]
-> **实车验证状态**：核心 `FullView 1632px` 地图投屏（高德地图、Apple Maps 全程路线与纯地图去重补丁）、5AU 车道引导、居中转向卡、ETA 胶囊、右侧媒体卡片及简体中文菜单已在 **BMW G20（iDrive 7 `MGU P18_23w44.2-1-3` + KOMBI4 仪表 + CarPlay）** 上实测跑通；`v0.9.9` 将透明切角遮罩直接嵌入 `cluster-render 2.9.1` 视频着色器内部（使用 GLSL `discard` 与硬件透明混合，彻底解决叠加层把原车表盘抹黑的问题），并新增数字车速防重影自动隐藏逻辑。在车机安装/调试前请做好配置备份，切勿卸载 `mgu-store` 与 `mgu-deploy` 等基础组件。
+> **实车验证状态**：核心 `FullView` 地图投屏（高德地图、Apple Maps 全程路线与纯地图去重补丁）、转向卡、ETA 胶囊、右侧媒体卡片及简体中文菜单已在 **BMW G20（iDrive 7 `MGU P18_23w44.2-1-3` + KOMBI4 仪表 + CarPlay）** 上实测跑通；`v0.9.10` 基于实车拍摄像素完成全新贴合标定：仅保留 **全屏地图** 与 **居中标准小地图** 两种地图模式，大幅拓宽并柔和羽化地图至原厂表盘刻度内沿，上下延伸至顶部 5AU 与底部车道栏上方，并加入熄火驻车地图保持机制。在车机安装/调试前请做好配置备份，切勿卸载 `mgu-store` 与 `mgu-deploy` 等基础组件。
 
 ![Cockpit+ 全屏仪表驾驶舱全景示意](docs/cockpit-overview.png)
 
@@ -20,34 +20,34 @@
 
 ### 核心功能一览
 
-- **三种零遮挡地图显示模式**（支持高德地图 / 百度地图 / Apple Maps / Google Maps / Waze）：
-  1. **`全屏地图 · 保留原厂双表盘 (fullview_dials`，默认)**：通过 `0x203` 将地图延展至仪表顶部边缘（`y=0..616`），并由 `cluster-render 2.9.1` 在**地图视频着色器内部执行 `discard` 镂空与透明羽化混合**，从像素写入阶段就避开左右双表盘区域，**既全高显示大地图，又 100% 原样保留原厂时速/转速双环、指针与油量/水温表**。
-  2. **`全屏地图 · 宽幅沉浸 1632px (fullview)`**：奥迪式超宽视野铺满中央区域，配合超椭圆视频着色器透明弧形切角避让油量、水温与底栏，居中车速（自动仅在此模式下显示，避免重影）与右侧卡片直接浮显于地图上。
-  3. **`原生居中地图 1088×480 (native)`**：自动调用 `unhost` 退回硬件后层通道 `0x100`，位于原厂表盘之后 100% 零遮挡，同时照常保留全部外圈数据与 HUD 增强。
+- **两种简洁地图显示模式**（支持高德地图 / 百度地图 / Apple Maps / Google Maps / Waze）：
+  1. **`全屏地图 · 融合双表盘 (fullview_dials`，默认)**：通过 `0x203` 将地图纵向扩展至 `y=0..642`（上至顶部 5AU 区域，下延至原车底部里程/原厂车道栏廊道），并由 `cluster-render 2.9.2` 在视频着色器内部按 **BMW 实车六边形表盘刻度坐标** 进行宽幅镂空与柔边羽化混合（边缘柔和衔接 `340..30`、`7..1`、限速与 `1/min x1000` 内沿而不遮挡），同时自动开启无框数字车速。
+  2. **`居中标准小地图 (native)`**：地图渲染在 `0x100` 原车居中通道，**自动隐藏重绘车速与右侧媒体/胎压/行程卡片**，完全交由原厂仪表显示；若导航过程中熄火驻车导致 `0x100` 锁定（`idle_ms = 600000` 保活），系统自动在 `0x203` 中央廊道内接管显示地图（`mask_mode=2`），保持熄火界面完整。
+- **精简导航卡片不重复**：仪表端复用 BMW 原厂底部车道栏，**移除仪表端重复的 5AU 车道条**（HUD 矢量 6 车道引导保留），并将 **iOS 转向提示卡上移至顶部居中 5AU 摄像头空白区（`y=18`）**。
+- **Cockpit+ 外圈读数稳固保留**：切换为 **`仅外圈车况读数 (map_only)`** 时，油温/水温、12V 电量、混动 HV 电量、刹车力度条、档位与车内温度继续保留在各自原生外圈位置（`0x203` 仅隐藏右侧卡片与全屏托管，交还原车右侧 BC 视图），不再缩入中心小地图。
 - **Apple Maps 实车专项优化**：通过 `--safe 840x570+396+40`（`280×190 pt @3x`）与纯地图模式 `maps:/car/instrumentcluster/map`（`itemType 1`），开始路线导航时稳定显示全程路径且不弹出苹果自带重复灰底卡片。
 - **驾驶舱核心小组件（`panel 0x203`，严格避让 `GEAR_WIN 1380..1460` 安全区）**：
-  - ① **5AU 顶部居中车道引导条**（`lane_guidance`）：支持 CarPlay / 高德 / 百度双层实时车道与推荐箭头。
-  - ② **居中 iOS 转向提示卡**（`guidance_turn_card`）：支持路名与绿色高速出口徽标，触发距离可在菜单设置 `200m / 350m / 500m / 800m / 导航全程常显`。
-  - ③ **居中无框数字车速 + 工况双行**（`speed` + `below_speed`）：支持油耗 / 电耗、实时功率 / 转速 / 涡轮增压值，每行可独立关闭或切换无框/半透明底板。
-  - ④ **右侧多功能卡片（方向盘 BC 键循环切换）**（`right_widget`）：高清专辑封面媒体卡、行程与动力总成、四轮飞梭胎压胎温与智能异常警报、插混充电完成时间预估。
-  - ⑤ **底部 ETA 到达胶囊**（`eta_pill`）：实时预计到达时间、剩余时间与剩余里程，未导航时自动隐藏。
-  - ⑥⑦⑧ **外圈车况与底栏读数**：左下角发动机机油温度（冷机蓝字预警）与冷却液/波箱油温；档位 `D1–D8` 紧贴原车 `D` 旁且严格保证 `x ≥ 1461`；车内温度（随制冷/制热自动变色）；只读 DSC 液压刹车力度条/插混回充条；右下角 12V 电瓶 `% / 电压` 与混动 HV 电量显示。
+  - ① **顶部居中 iOS 转向提示卡**（`guidance_turn_card` at `5AU` pocket）：支持路名与绿色高速出口徽标，触发距离可在菜单设置 `200m / 350m / 500m / 800m / 导航全程常显`。
+  - ② **居中无框数字车速 + 工况双行**（`speed` + `below_speed`）：支持油耗 / 电耗、实时功率 / 转速 / 涡轮增压值，每行可独立关闭或切换无框/半透明底板。
+  - ③ **右侧多功能卡片（方向盘 BC 键循环切换）**（`right_widget`）：高清专辑封面媒体卡、行程与动力总成、四轮飞梭胎压胎温与智能异常警报、插混充电完成时间预估（居中地图模式下自动让位给原车右侧 BC）。
+  - ④ **底部 ETA 到达胶囊**（`eta_pill`）：实时预计到达时间、剩余时间与剩余里程，未导航时自动隐藏。
+  - ⑤⑥⑦ **外圈车况与底栏读数**：左下角发动机机油温度（冷机蓝字预警）与冷却液/波箱油温；档位 `D1–D8` 紧贴原车 `D` 旁且严格保证 `x ≥ 1461`；车内温度（随制冷/制热自动变色）；只读 DSC 液压刹车力度条/插混回充条；右下角 12V 电瓶 `% / 电压` 与混动 HV 电量显示。
 - **HUD 抬头显示增强（`0x323`）与自由坐标微调工作室**：
   - 顶部通栏路名与高速出口绿牌、3 行只读车况、前车车距与相对速度、右侧矢量转向箭头与 6 车道引导（原车路口放大图弹出时自动避让 `y ≥ 202` ACC 区）。
-  - 车机内设 **9 个清晰分类菜单**，内置 **组件自由位置微调工作室（`LAYOUT_POS`）**：可选 `2 / 10 / 30 px` 步长，对转向卡、车道条、ETA 胶囊、数字车速、外圈读数与 HUD 自由调 X/Y 坐标。
+  - 内置 **组件自由位置微调工作室（`LAYOUT_POS`）**：可选 `2 / 10 / 30 px` 步长，对顶部转向卡、ETA 胶囊、数字车速、外圈读数与 HUD 自由调 X/Y 坐标。
 
-![Cockpit+ 三种地图模式与 HUD 抬头显示布局](docs/map-modes-hud.png)
+![Cockpit+ 地图模式与 HUD 抬头显示布局](docs/map-modes-hud.png)
 
 ### 套件组件与版本
 
 | 组件名 | 类型 | 版本 | 说明 |
 | :--- | :--- | :--- | :--- |
-| **`cluster-render`** | 工具 | `2.9.1` | RAMSES 19 + Dcsm2 仪表与 HUD 合成器，支持 `1632x720`、`host_layers` 与原生视频着色器透明切角 `host_mask`（基于 `robertnisipeanu/idrive-apps`） |
-| **`waze-on-cluster`** | 工具 | `2.9.0` | FullView 全屏 CarPlay / AA 地图解码器（`1632x720`、`--safe 840x570+396+40`、Apple Maps 纯地图 `itemType 1`）与 HUD 投影 |
+| **`cluster-render`** | 工具 | `2.9.2` | RAMSES 19 + Dcsm2 仪表与 HUD 合成器，支持 `1632x720`、`host_layers` 与标定全屏/熄火保活着色器 `host_mask`（基于 `robertnisipeanu/idrive-apps`） |
+| **`waze-on-cluster`** | 工具 | `2.9.1` | FullView 全屏 CarPlay / AA 地图解码器（`1632x720`、`--safe 840x570+396+40`、`idle_ms=600000` 熄火保活）与 HUD 投影 |
 | **`robertn_waze_cluster`** | 应用 | `0.6.17` | *Maps on cluster* 车机控制界面（已适配识别 `1632x720` 全屏补丁状态） |
 | **`mgu-render`** | 工具 *（可选）* | `0.6.26` | OpenGL ES 2 GPU 渲染守护进程（源自 `robertnisipeanu/mgu-store`） |
 | **`cockpit-fullview`** | 工具 | `1.0.0` | 自动可逆修复旧版 `cluster-render.local.conf` 槽位冲突并禁用重叠原生 C++ 浮窗 |
-| **`id7_cockpit_plus`** | 应用 | `0.9.9` | **Cockpit+ 主程序**：中文菜单、3 种零遮挡全屏/原生地图模式、着色器级透明切角、防车速重影、全套仪表与 HUD 控件及自由坐标微调 |
+| **`id7_cockpit_plus`** | 应用 | `0.9.10` | **Cockpit+ 主程序**：标定双模式全屏/居中地图、5AU 顶置转向卡（无重复车道条）、原生模式自动隐身、熄火驻车保持、全套外圈/HUD 控件 |
 
 ### 通过 MGU Store 安装（Releases 源）
 
@@ -62,7 +62,7 @@
 
 > [!IMPORTANT]
 > - 切勿卸载 **`mgu-store`** 和 **`mgu-deploy`**。
-> - 如果此前曾通过第三方安装包/其他源安装过 `cluster-render`，请在 MGU Store 的 **Sources** 中**暂时仅保留 `Hyperionism/idrive7-cockpit-plus` 一个包含 `cluster-render` 的软件源**再点击安装/更新，即可平滑升级至 `2.9.1`。
+> - 如果此前曾通过第三方安装包/其他源安装过 `cluster-render`，请在 MGU Store 的 **Sources** 中**暂时仅保留 `Hyperionism/idrive7-cockpit-plus` 一个包含 `cluster-render` 的软件源**再点击安装/更新，即可平滑升级至 `2.9.2`。
 
 ### 本地构建、测试与桌面模拟器
 
@@ -85,7 +85,7 @@ npm run bench
 ## English
 
 > [!NOTE]
-> **Real-Vehicle Verified Base + New v0.9.9 Native Shader Mask**: Core `1632px` FullView CarPlay projection (AMAP & Apple Maps full-route with pure map-only `itemType 1`), 5AU lanes, centered turn card, ETA pill, right-wing media widget, and `zh-CN` UI have been verified on a physical **BMW G20 (iDrive 7 `MGU P18_23w44.2-1-3`, KOMBI4, CarPlay)**. `v0.9.9` moves the alpha cutout & GLSL `discard` directly into **`cluster-render 2.9.1`'s video fragment shaders** (eliminating black overlay occlusion against BMW's live swapchain dials), plus auto-hides the digital speed overlay whenever native dials are visible. Always back up configs and never uninstall `mgu-store` or `mgu-deploy`.
+> **Real-Vehicle Verified Base + v0.9.10 Pixel-Calibrated Shader Mask & Standby Persistence**: Core `1632px` FullView CarPlay projection (AMAP & Apple Maps full-route with pure map-only `itemType 1`), turn card, ETA pill, right-wing media widget, and `zh-CN` UI have been verified on a physical **BMW G20 (iDrive 7 `MGU P18_23w44.2-1-3`, KOMBI4, CarPlay)**. `v0.9.10` removes the redundant Wide and cluster 5AU-lane overlays (retaining OEM cluster lanes + HUD 6-lane guidance), calibrates `mask_mode=1` to match KOMBI4's hexagonal numeral curve with soft feathering and Y-axis expansion (`y=0..642`), moves the turn card up into the `5AU` pocket, keeps outer vitals in place in `map_only` mode, hides speed/right-widget in Center Small Map (`native`) mode, and keeps the map visible during engine-off ignition standby.
 
 ![Cockpit+ KOMBI4 Overview Diagram](docs/cockpit-overview.png)
 
@@ -93,28 +93,28 @@ npm run bench
 
 ### Key Features
 
-- **Three Zero-Occlusion Cluster Map Modes**:
-  1. **`FullView + Native Dials (fullview_dials`, default)**: Extends the hosted map to the top edge of `0x203` (`y=0..616`) while `cluster-render 2.9.1` evaluates a native GLSL `discard` & alpha feather directly inside its video shaders so BMW's live speedometer & tachometer rings, needles, and gauges are never overwritten.
-  2. **`FullView Wide 1632px (fullview)`**: Full-width Audi-style cockpit projection across `1632x616`, paired with a smooth superellipse video-shader bezel cutout that clears the fuel/coolant sub-gauges and bottom status bar (digital speed overlay auto-enables in this mode).
-  3. **`Native Center 1088x480 (native)`**: Calls `cr.unhost('map')` to return the map to hardware slot `0x100` **behind** BMW's stock dials for 100% zero dial occlusion while retaining all outer Cockpit+ and HUD overlays.
+- **Two Clean Zero-Occlusion Cluster Map Modes**:
+  1. **`FullView Map (fullview_dials`, default)**: Extends the hosted map vertically across `y=0..642` (spanning the top 5AU camera pocket down across the bottom center corridor clear of `ETA_PILL`/`GEAR_WIN`) while `cluster-render 2.9.2` evaluates a pixel-calibrated hexagonal stadium GLSL `discard` & soft feather mask (`mask_mode=1`, default `76 px`) that blends cleanly onto the inner edge of BMW's scale numerals without obscuring them, paired with the frameless digital speed overlay.
+  2. **`Center Small Map (native)`**: Unhosts to slot `0x100` behind BMW's native dials and automatically hides Cockpit+'s redrawn speed and right-wing widget so BMW's native speedometer digits and stock right BC view remain unobstructed. If ignition standby locks `0x100` during active navigation, `OverlayRenderer` rescues the map onto `panel 0x203` (`mask_mode=2`) with `waze-on-cluster` `idle_ms=600000` keep-alive.
+- **Outer Vitals Preservation**: Switching `clusterSlotMode` to **Outer Vitals Only (`map_only`)** keeps coolant/oil, 12V, HV SoC, brake rail, `D1–D8`, cabin temp, and below-speed telemetry in their original outer `0x203` positions (never squeezing into `0x100`) while restoring the stock right BC widget.
 - **Apple Maps Pure Map-Only Route Fix**: Uses `--safe 840x570+396+40` (`280×190 pt @3x`) and `maps:/car/instrumentcluster/map` (`itemType 1`) so active Apple Maps routes stay rendered without duplicate grey turn cards.
 - **Calibrated KOMBI4 Panel (`0x203`) & HUD (`0x323`) Widgets**:
-  - **Navigation Overlays**: Dual-row **5AU lane guidance**, **iOS turn card** (`200m–800m` or always-on, with highway exit shield), and bottom **ETA capsule**.
+  - **Navigation Overlays**: Top-center **iOS turn card** in the `5AU` pocket (`760, 18, 400x96`, `200m–800m` or always-on, with highway exit shield) + bottom **ETA capsule** (relying on KOMBI4's native cluster lane bar while retaining full **6-lane vector guidance on HUD**).
   - **Powertrain, Media & Alerts**: Frameless **digital speed** + per-line **efficiency/RPM/boost** vitals, **BC-cyclable right-wing widget** (album art media, trip/powertrain, 4-wheel TPMS & smart anomaly alerts, PHEV charging finish prognosis), `D1–D8` gear strictly clear of `GEAR_WIN (1380..1460)`, HVAC-colored cabin temp, read-only DSC brake rail, and 12V/HV SoC.
   - **HUD (`0x323`) & Position Studio**: CJK street + green highway exit banner, lead-car headway (`1.8s / dist / delta`), 3-line vitals, vector HUD navigation that auto-yields on OEM intersection mini-maps, plus an in-car **Widget Position Studio (`2 / 10 / 30 px` free X/Y adjustment)**.
 
-![Cockpit+ Three Map Modes and HUD Layout](docs/map-modes-hud.png)
+![Cockpit+ Map Modes and HUD Layout](docs/map-modes-hud.png)
 
 ### Components
 
 | Component | Kind | Version | Purpose |
 | :--- | :--- | :--- | :--- |
-| **`cluster-render`** | Tool | `2.9.1` | Shared RAMSES 19 + Dcsm2 cluster/HUD compositor with `1632x720`, `host_layers`, and native video-shader `host_mask` cutouts |
-| **`waze-on-cluster`** | Tool | `2.9.0` | FullView CarPlay / AA H.264 decoder (`1632x720`, `--safe 840x570+396+40`, Apple Maps `itemType 1`) + HUD projection |
+| **`cluster-render`** | Tool | `2.9.2` | Shared RAMSES 19 + Dcsm2 cluster/HUD compositor with `1632x720`, `host_layers`, and calibrated video-shader `host_mask` cutouts |
+| **`waze-on-cluster`** | Tool | `2.9.1` | FullView CarPlay / AA H.264 decoder (`1632x720`, `--safe 840x570+396+40`, `idle_ms=600000` standby keep-alive) + HUD projection |
 | **`robertn_waze_cluster`** | App | `0.6.17` | *Maps on Cluster* iDrive UI (updated to recognize `1632x720` FullView patching) |
 | **`mgu-render`** | Tool *(optional)* | `0.6.26` | 60 fps OpenGL ES 2 GPU renderer daemon (from `robertnisipeanu/mgu-store`) |
 | **`cockpit-fullview`** | Tool | `1.0.0` | Reversibly repairs conflicting `cluster-render.local.conf` overrides and disables overlapping native C++ pods |
-| **`id7_cockpit_plus`** | App | `0.9.9` | **Cockpit+**: 3 map modes with shader-level transparent cutouts, 5AU lanes, turn card, ETA pill, right-wing widgets, HUD nav & Position Studio |
+| **`id7_cockpit_plus`** | App | `0.9.10` | **Cockpit+**: 2 calibrated map modes, 5AU top turn card (no duplicate cluster lanes), native-mode stock preservation, engine-off standby map persistence, HUD nav & Position Studio |
 
 ### Install via MGU Store (Releases Feed)
 

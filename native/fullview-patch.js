@@ -18,8 +18,8 @@ const UPSTREAM_PINS = {
   idriveAppsCommit: '9da968c8644ef4f6bcce174b0836f9f24d8db7fb',
   mguStoreRepo: 'robertnisipeanu/mgu-store',
   mguStoreCommit: '37702a880f1ed5fd346f4c944127fb276920be9c',
-  clusterRenderVersion: '2.9.1',
-  wazeOnClusterVersion: '2.9.0',
+  clusterRenderVersion: '2.9.2',
+  wazeOnClusterVersion: '2.9.1',
   robertnWazeAppVersion: '0.6.17',
   mguRenderVersion: '0.6.26'
 };
@@ -88,25 +88,42 @@ const MASK_VIDEO_SHADERS_CPP = [
   '        float wx = u_mask.z + v_uv.x * u_mask_sz.x;',
   '        float wy = u_mask.w + v_uv.y * u_mask_sz.y;',
   '        float ax = abs(wx - 960.0);',
-  '        float fPx = clamp(u_mask.y > 1.0 ? u_mask.y : 54.0, 16.0, 120.0);',
-  '        float botA = 1.0 - smoothstep(616.0 - max(36.0, fPx * 0.8), 614.0, wy);',
+  '        float fPx = clamp(u_mask.y > 1.0 ? u_mask.y : 76.0, 24.0, 140.0);',
   '        if (u_mask.x < 1.5) {',
-  '            float halfW = 232.0;',
-  '            if (wy >= 95.0 && wy < 345.0) {',
-  '                halfW = mix(232.0, 372.0, smoothstep(0.0, 1.0, (wy - 95.0) / 250.0));',
-  '            } else if (wy >= 345.0) {',
-  '                halfW = mix(372.0, 268.0, smoothstep(0.0, 1.0, clamp((wy - 345.0) / 263.0, 0.0, 1.0)));',
+  '            float halfW = 246.0;',
+  '            if (wy >= 76.0 && wy < 112.0) {',
+  '                halfW = mix(246.0, 385.0, smoothstep(0.0, 1.0, (wy - 76.0) / 36.0));',
+  '            } else if (wy >= 112.0 && wy < 155.0) {',
+  '                halfW = mix(385.0, 520.0, smoothstep(0.0, 1.0, (wy - 112.0) / 43.0));',
+  '            } else if (wy >= 155.0 && wy < 225.0) {',
+  '                halfW = mix(520.0, 635.0, smoothstep(0.0, 1.0, (wy - 155.0) / 70.0));',
+  '            } else if (wy >= 225.0 && wy < 318.0) {',
+  '                halfW = mix(635.0, 712.0, smoothstep(0.0, 1.0, (wy - 225.0) / 93.0));',
+  '            } else if (wy >= 318.0 && wy < 425.0) {',
+  '                halfW = mix(712.0, 682.0, smoothstep(0.0, 1.0, (wy - 318.0) / 107.0));',
+  '            } else if (wy >= 425.0 && wy < 530.0) {',
+  '                halfW = mix(682.0, 594.0, smoothstep(0.0, 1.0, (wy - 425.0) / 105.0));',
+  '            } else if (wy >= 530.0) {',
+  '                halfW = mix(594.0, 415.0, smoothstep(0.0, 1.0, clamp((wy - 530.0) / 112.0, 0.0, 1.0)));',
   '            }',
   '            float sideA = 1.0 - smoothstep(halfW - fPx, halfW, ax);',
-  '            float topA = smoothstep(0.0, 14.0, wy);',
+  '            float botEnd = mix(640.0, 610.0, smoothstep(240.0, 440.0, ax));',
+  '            float fBot = max(48.0, fPx * 0.78);',
+  '            float botA = 1.0 - smoothstep(botEnd - fBot, botEnd, wy);',
+  '            float topA = smoothstep(0.0, 6.0, wy);',
   '            ma = min(min(sideA, botA), topA);',
   '        } else {',
-  '            float nx = ax / 800.0;',
-  '            float ny = (wy - 308.0) / 308.0;',
-  '            float dOuter = pow(pow(max(nx, 0.0001), 3.2) + pow(max(abs(ny), 0.0001), 3.2), 1.0 / 3.2);',
-  '            float fNorm = clamp(fPx / 800.0, 0.03, 0.14);',
-  '            float outerA = 1.0 - smoothstep(1.0 - fNorm, 1.0, dOuter);',
-  '            ma = min(outerA, botA);',
+  '            float halfW = 232.0;',
+  '            if (wy >= 100.0 && wy < 345.0) {',
+  '                halfW = mix(232.0, 368.0, smoothstep(0.0, 1.0, (wy - 100.0) / 245.0));',
+  '            } else if (wy >= 345.0) {',
+  '                halfW = mix(368.0, 268.0, smoothstep(0.0, 1.0, clamp((wy - 345.0) / 263.0, 0.0, 1.0)));',
+  '            }',
+  '            float fStd = clamp(fPx * 0.75, 24.0, 84.0);',
+  '            float sideA = 1.0 - smoothstep(halfW - fStd, halfW, ax);',
+  '            float topA = smoothstep(96.0, 128.0, wy);',
+  '            float botA = 1.0 - smoothstep(568.0, 608.0, wy);',
+  '            ma = min(min(sideA, botA), topA);',
   '        }',
   '        if (ma <= 0.002) discard;',
   '    }',
@@ -147,25 +164,42 @@ const MASK_VIDEO_SHADERS_CPP = [
   '        float wx = u_mask.z + v_uv.x * u_mask_sz.x;',
   '        float wy = u_mask.w + v_uv.y * u_mask_sz.y;',
   '        float ax = abs(wx - 960.0);',
-  '        float fPx = clamp(u_mask.y > 1.0 ? u_mask.y : 54.0, 16.0, 120.0);',
-  '        float botA = 1.0 - smoothstep(616.0 - max(36.0, fPx * 0.8), 614.0, wy);',
+  '        float fPx = clamp(u_mask.y > 1.0 ? u_mask.y : 76.0, 24.0, 140.0);',
   '        if (u_mask.x < 1.5) {',
-  '            float halfW = 232.0;',
-  '            if (wy >= 95.0 && wy < 345.0) {',
-  '                halfW = mix(232.0, 372.0, smoothstep(0.0, 1.0, (wy - 95.0) / 250.0));',
-  '            } else if (wy >= 345.0) {',
-  '                halfW = mix(372.0, 268.0, smoothstep(0.0, 1.0, clamp((wy - 345.0) / 263.0, 0.0, 1.0)));',
+  '            float halfW = 246.0;',
+  '            if (wy >= 76.0 && wy < 112.0) {',
+  '                halfW = mix(246.0, 385.0, smoothstep(0.0, 1.0, (wy - 76.0) / 36.0));',
+  '            } else if (wy >= 112.0 && wy < 155.0) {',
+  '                halfW = mix(385.0, 520.0, smoothstep(0.0, 1.0, (wy - 112.0) / 43.0));',
+  '            } else if (wy >= 155.0 && wy < 225.0) {',
+  '                halfW = mix(520.0, 635.0, smoothstep(0.0, 1.0, (wy - 155.0) / 70.0));',
+  '            } else if (wy >= 225.0 && wy < 318.0) {',
+  '                halfW = mix(635.0, 712.0, smoothstep(0.0, 1.0, (wy - 225.0) / 93.0));',
+  '            } else if (wy >= 318.0 && wy < 425.0) {',
+  '                halfW = mix(712.0, 682.0, smoothstep(0.0, 1.0, (wy - 318.0) / 107.0));',
+  '            } else if (wy >= 425.0 && wy < 530.0) {',
+  '                halfW = mix(682.0, 594.0, smoothstep(0.0, 1.0, (wy - 425.0) / 105.0));',
+  '            } else if (wy >= 530.0) {',
+  '                halfW = mix(594.0, 415.0, smoothstep(0.0, 1.0, clamp((wy - 530.0) / 112.0, 0.0, 1.0)));',
   '            }',
   '            float sideA = 1.0 - smoothstep(halfW - fPx, halfW, ax);',
-  '            float topA = smoothstep(0.0, 14.0, wy);',
+  '            float botEnd = mix(640.0, 610.0, smoothstep(240.0, 440.0, ax));',
+  '            float fBot = max(48.0, fPx * 0.78);',
+  '            float botA = 1.0 - smoothstep(botEnd - fBot, botEnd, wy);',
+  '            float topA = smoothstep(0.0, 6.0, wy);',
   '            ma = min(min(sideA, botA), topA);',
   '        } else {',
-  '            float nx = ax / 800.0;',
-  '            float ny = (wy - 308.0) / 308.0;',
-  '            float dOuter = pow(pow(max(nx, 0.0001), 3.2) + pow(max(abs(ny), 0.0001), 3.2), 1.0 / 3.2);',
-  '            float fNorm = clamp(fPx / 800.0, 0.03, 0.14);',
-  '            float outerA = 1.0 - smoothstep(1.0 - fNorm, 1.0, dOuter);',
-  '            ma = min(outerA, botA);',
+  '            float halfW = 232.0;',
+  '            if (wy >= 100.0 && wy < 345.0) {',
+  '                halfW = mix(232.0, 368.0, smoothstep(0.0, 1.0, (wy - 100.0) / 245.0));',
+  '            } else if (wy >= 345.0) {',
+  '                halfW = mix(368.0, 268.0, smoothstep(0.0, 1.0, clamp((wy - 345.0) / 263.0, 0.0, 1.0)));',
+  '            }',
+  '            float fStd = clamp(fPx * 0.75, 24.0, 84.0);',
+  '            float sideA = 1.0 - smoothstep(halfW - fStd, halfW, ax);',
+  '            float topA = smoothstep(96.0, 128.0, wy);',
+  '            float botA = 1.0 - smoothstep(568.0, 608.0, wy);',
+  '            ma = min(min(sideA, botA), topA);',
   '        }',
   '        if (ma <= 0.002) discard;',
   '    }',
@@ -198,7 +232,7 @@ function patchHostVideoMask(crDir) {
       ].join('\n'),
       [
         'struct VideoEdge {',
-        '    uint32_t top = 0, bottom = 0, fade = 0, dim = 0, blur = 0, mask_mode = 0, mask_feather = 54;',
+        '    uint32_t top = 0, bottom = 0, fade = 0, dim = 0, blur = 0, mask_mode = 0, mask_feather = 76;',
         '    bool on() const { return top || bottom; }',
         '    bool has_mask() const { return mask_mode > 0; }',
         '    bool any() const { return on() || has_mask(); }',
@@ -498,8 +532,8 @@ function patchHostVideoMask(crDir) {
       ].join('\n'),
       [
         '    static const char *const edge_keys[] = {"edge_top", "edge_bottom", "edge_fade", "edge_dim", "edge_blur", "mask_mode", "mask_feather"};',
-        '    static const double edge_max[] = {720, 720, 360, 4096, 32, 2, 120};',
-        '    double ev[7] = {0, 0, 0, 0, 0, 0, 54};',
+        '    static const double edge_max[] = {720, 720, 360, 4096, 32, 2, 140};',
+        '    double ev[7] = {0, 0, 0, 0, 0, 0, 76};',
         '    for (size_t i = 0; i < 7; i++)'
       ].join('\n'),
       'src/server.cpp edge_keys'
@@ -531,10 +565,12 @@ function patchIdriveApps(rootDir) {
   crComp.uninstallable = true;
   fs.writeFileSync(crCompPath, JSON.stringify(crComp, null, 2) + '\n', 'utf8');
 
-  // 3. Configure waze-on-cluster defaults for crisp 1632x720 hosted FullView (keep opt-in keys = 0 for opt_in_test)
+  // 3. Configure waze-on-cluster defaults for crisp 1632x720 hosted FullView & engine-off standby keep-alive (keep opt-in keys = 0 for opt_in_test)
   const wocConfPath = path.join(wocDir, 'waze-on-cluster.conf');
   let wocConf = fs.readFileSync(wocConfPath, 'utf8');
   wocConf = setIniLine(wocConf, 'tex_size', '1632x720');
+  wocConf = setIniLine(wocConf, 'idle_ms', '600000');
+  wocConf = setIniLine(wocConf, 'stall_ms', '60000');
   fs.writeFileSync(wocConfPath, wocConf, 'utf8');
 
   // 4. Patch patchd.js so --panel high defaults to 1632x720 when waze-on-cluster.conf sets tex_size = 1632x720
@@ -614,7 +650,7 @@ function patchIdriveApps(rootDir) {
   wocComp.version = UPSTREAM_PINS.wazeOnClusterVersion;
   wocComp.uninstallable = true;
   wocComp.requires = Object.assign({}, wocComp.requires || {}, {
-    'cluster-render': '2.9.0'
+    'cluster-render': UPSTREAM_PINS.clusterRenderVersion
   });
   fs.writeFileSync(wocCompPath, JSON.stringify(wocComp, null, 2) + '\n', 'utf8');
 

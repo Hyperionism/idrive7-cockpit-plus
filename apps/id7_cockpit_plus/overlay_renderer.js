@@ -35,7 +35,7 @@ const {
 } = require('./units');
 const {
     NW: HUD_NAV_W, NH: HUD_NAV_H, ROAD_W: HUD_ROAD_W, ROAD_H: HUD_ROAD_H,
-    drawHudNav, drawHudRoadBanner, drawLaneRow, laneWindow, drawExitBadge, measureExitBadge, hudNavKey, hudRoadKey,
+    drawHudNav, drawHudRoadBanner, drawExitBadge, measureExitBadge, hudNavKey, hudRoadKey,
 } = require('./hud_nav_renderer');
 const { drawArrow } = require('./redline_hud_nav');
 const { metres } = require('./redline_nav');
@@ -45,6 +45,7 @@ const { computeIceBatteryCharge } = require('./signals');
 const { LayoutStore, resolveWidgetRect } = require('./layout_config');
 
 const DEFAULT_CONF_DIR = '/var/opt/cluster-render';
+const DEFAULT_CR_STATUS = '/run/cluster-render/status.txt';
 const DEFAULT_WAZE_STATUS = '/run/waze-on-cluster/status.json';
 const ICE_CHARGE_MAX_KW = 15.0;
 const BOLT_ROWS = [
@@ -117,10 +118,8 @@ const HV_SOC_GAUGE_BASE = { x: 1796, y: 452, w: 92, h: 56 };
 const RIGHT_WIDGET_BASE = { x: 1244, y: 88, w: 536, h: 520 };
 // Frameless speedometer digits centered on G20 dial readout
 const SPEED_BASE = { x: 372, y: 328, w: 220, h: 90 };
-// 5AU unused IR-camera pocket top center (clear of left ring <=722 and right redline >=1198)
-const LANE_GUIDANCE_BASE = { x: 760, y: 20, w: 400, h: 78 };
-// Center-column iOS turn card cleanly below 5AU lanes & far left of right_widget
-const TURN_CARD_BASE = { x: 760, y: 110, w: 400, h: 104 };
+// Top-center 5AU camera pocket iOS turn card (stock OEM KOMBI4 already renders bottom lane bar)
+const TURN_CARD_BASE = { x: 760, y: 18, w: 400, h: 96 };
 // Bottom-center iOS arrival ETA capsule
 const ETA_PILL_BASE = { x: 760, y: 648, w: 400, h: 46 };
 
@@ -141,7 +140,7 @@ const MAP_RIGHT_RECT = { x: 680, y: 374, w: 228, h: 74 };
 const CLUSTER_LAYER_NAMES = ['below_speed', 'gear_d', 'brake_rail', 'corner_left', 'corner_right'];
 const PANEL_ALL_LAYERS = [
     'below_speed', 'gear_d', 'cabin_temp', 'brake_rail', 'corner_left', 'corner_right',
-    'hv_soc_gauge', 'right_widget', 'speed', 'lane_guidance', 'guidance_turn_card', 'eta_pill',
+    'hv_soc_gauge', 'right_widget', 'speed', 'guidance_turn_card', 'eta_pill',
 ];
 const MAP_LAYER_NAMES = ['map_speed', 'map_left', 'map_right'];
 
@@ -570,6 +569,7 @@ class OverlayRenderer {
         installStockBmwFonts(fontsMod, { cacheDir: o.dataDir, fontDir: o.fontDir, log: this.log });
         this.socketPath = o.socketPath || process.env.COCKPIT_PLUS_SOCKET || process.env.CLUSTER_METRICS_SOCKET || process.env.HUD_CLUSTER_SOCKET || DEFAULT_PATH;
         this.confDir = o.confDir || process.env.CLUSTER_RENDER_CONF_DIR || DEFAULT_CONF_DIR;
+        this.crStatusPath = o.crStatusPath || process.env.CLUSTER_RENDER_STATUS_PATH || DEFAULT_CR_STATUS;
         this.wazeStatusPath = o.wazeStatusPath || process.env.WAZE_STATUS_PATH || DEFAULT_WAZE_STATUS;
         this.ClusterRenderCtor = o.ClusterRender || ClusterRender;
         this.layoutStore = new LayoutStore(o.layoutPath);
@@ -582,12 +582,12 @@ class OverlayRenderer {
         this.refused = [];
         this.wazeShowing = false;
         this.lastWazeCheck = 0;
+        this.lastCrStatusCheck = 0;
         this.slotStatus = inspectClusterSlotConfig(this.confDir);
         this.bytesSent = 0;
         this.lastHudNavKey = '';
         this.lastHudRoadKey = '';
         this.lastRightWidgetKey = '';
-        this.lastLaneKey = '';
         this.lastTurnCardKey = '';
         this.lastEtaPillKey = '';
         this.lastSpeedKey = '';
@@ -599,6 +599,7 @@ class OverlayRenderer {
         this._alertDismissed = false;
         this._iceChgState = {};
         this.hostConfigKey = '';
+        this.userMapMode = 'fullview_dials';
         this.hostModeActive = 'native';
         this.crHostLayers = false;
         this.crHostMask = false;
@@ -606,13 +607,18 @@ class OverlayRenderer {
         this.hostingState = '';
         this.hostingReason = '';
         this.mapHostedInto = '';
+        this.mapTargetState = '';
+        this.mapTargetReason = '';
+        this.mapSlotLocked = false;
+        this._standbyRescueActive = false;
+        this.standbyRescue = false;
         this.wazeStatus = null;
         this.bezelMaskMode = 'off';
         this.lastSummary = {};
     }
 
     isMapHostedLive() {
-        return (this.hostModeActive === 'fullview_dials' || this.hostModeActive === 'fullview') &&
+        return (this.hostModeActive === 'fullview_dials' || this.hostModeActive === 'standby_center') &&
             (this.hostingState === 'live' || this.mapHostedInto === 'panel');
     }
 
@@ -627,10 +633,10 @@ class OverlayRenderer {
     }
 
     _fullviewHostRect() {
-        // Keep hosted FullView map strictly within y=0..616 so it NEVER touches KOMBI4's
-        // bottom status bar or GEAR_WIN (1380..1460, 648..720) which latches safety BLACK_BOX.
+        // Keep hosted FullView map strictly within y=0..642 so it stays clear of
+        // ETA_PILL (y=648..694) and KOMBI4 GEAR_WIN (1380..1460, 648..720).
         const ms = this._parseMapTargetSize();
-        const dstH = 616;
+        const dstH = 642;
         const srcH = Math.max(32, Math.min(ms.h, Math.floor((ms.h * dstH) / 720) & ~1));
         return {
             target: 'map',
@@ -646,22 +652,26 @@ class OverlayRenderer {
         };
     }
 
-    _syncMapHost(mode, maskOn, featherMode) {
-        const cleanMode = mode === 'fullview_dials'
-            ? 'fullview_dials'
-            : (mode === 'fullview' ? 'fullview' : 'native');
-        // Never cover native KOMBI4 dials in fullview_dials without native video-shader cutout support (cluster-render >= 2.9.1).
-        const effectiveMode = (cleanMode === 'fullview_dials' && this.ready && !this.crHostMask)
+    _syncMapHost(mode, featherMode, standbyRescue) {
+        const cleanMode = (mode === 'native' || mode === 'center' || mode === 'off')
             ? 'native'
-            : cleanMode;
+            : 'fullview_dials';
+        this.userMapMode = cleanMode;
+        // Never cover native KOMBI4 dials without native video-shader cutout support (cluster-render >= 2.9.1).
+        let effectiveMode = cleanMode;
+        if (cleanMode === 'fullview_dials') {
+            effectiveMode = (this.ready && !this.crHostMask) ? 'native' : 'fullview_dials';
+        } else if (standbyRescue && (!this.ready || this.crHostMask)) {
+            effectiveMode = 'standby_center';
+        }
         this.hostModeActive = effectiveMode;
 
-        const wantsHost = effectiveMode === 'fullview_dials' || effectiveMode === 'fullview';
-        const featherPx = featherMode === 'tight' ? 36 : (featherMode === 'wide' ? 80 : 54);
+        const wantsHost = effectiveMode === 'fullview_dials' || effectiveMode === 'standby_center';
+        const featherPx = featherMode === 'tight' ? 56 : (featherMode === 'wide' ? 104 : 76);
         const maskModeNum = (wantsHost && this.crHostMask)
-            ? (effectiveMode === 'fullview_dials' ? 1 : (maskOn ? 2 : 0))
+            ? (effectiveMode === 'standby_center' ? 2 : 1)
             : 0;
-        this.bezelMaskMode = maskModeNum === 1 ? 'dials' : (maskModeNum === 2 ? 'bezel' : 'off');
+        this.bezelMaskMode = maskModeNum === 1 ? 'dials' : (maskModeNum === 2 ? 'standby' : 'off');
         if (!this.cr) return;
 
         const key = effectiveMode + '|' + maskModeNum + '|' + featherPx + '|' + (this.crHostMask ? '1' : '0');
@@ -706,6 +716,7 @@ class OverlayRenderer {
             this.wazeStatus = st && typeof st === 'object' ? {
                 state: String(st.state || ''),
                 target: String(st.target || ''),
+                reason: st.reason ? String(st.reason) : '',
                 error: st.error ? String(st.error) : '',
             } : null;
             this.wazeShowing = Boolean(st && st.state === 'showing' && (st.target === 'map' || st.target === 'panel'));
@@ -714,6 +725,25 @@ class OverlayRenderer {
             this.wazeShowing = false;
         }
         return this.wazeShowing;
+    }
+
+    _readClusterRenderStatus(nowMs) {
+        if (nowMs - this.lastCrStatusCheck < 1000) return this.mapSlotLocked;
+        this.lastCrStatusCheck = nowMs;
+        try {
+            const txt = fs.readFileSync(this.crStatusPath, 'utf8');
+            const lines = txt.split(/\r?\n/);
+            for (let i = 0; i < lines.length; i++) {
+                const line = lines[i];
+                if (!/\btarget\s+map\b/i.test(line) && !/\bslot\s+0x100\b/i.test(line)) continue;
+                if (/locked/i.test(line)) {
+                    this.mapSlotLocked = true;
+                } else if (/\bshown\b/i.test(line) || /\bstatus\s+2\b/i.test(line)) {
+                    this.mapSlotLocked = false;
+                }
+            }
+        } catch (e) { /* keep cr.on('target') state when status.txt is absent */ }
+        return this.mapSlotLocked;
     }
 
     _ensureLayer(name, opts) {
@@ -815,6 +845,16 @@ class OverlayRenderer {
             this.mapHostedInto = (ev && ev.into) ? String(ev.into) : '';
             this.hostConfigKey = '';
         });
+        cr.on('target', (target, state, holder, reason) => {
+            if (target !== 'map') return;
+            this.mapTargetState = String(state || '');
+            this.mapTargetReason = String(reason || '');
+            if (this.mapTargetState === 'waiting' && /locked/i.test(this.mapTargetReason)) {
+                this.mapSlotLocked = true;
+            } else if (this.mapTargetState === 'shown' || this.mapTargetState === 'parked') {
+                this.mapSlotLocked = false;
+            }
+        });
         cr.on('disconnected', () => {
             this.ready = false;
             this.connected = false;
@@ -824,6 +864,11 @@ class OverlayRenderer {
             this.hostingState = '';
             this.hostingReason = '';
             this.mapHostedInto = '';
+            this.mapTargetState = '';
+            this.mapTargetReason = '';
+            this.mapSlotLocked = false;
+            this._standbyRescueActive = false;
+            this.standbyRescue = false;
             this.bezelMaskMode = 'off';
         });
         cr.on('refused', (op, ref, reason) => {
@@ -853,28 +898,22 @@ class OverlayRenderer {
         const t = model.telemetry || {};
         const eff = model.efficiency || {};
 
-        // Consistent Cluster Display Mode ('auto' removed):
-        //   - 'panel_only' (default): always render all 5 outer zones + re-implemented Right-Wing Widget on 0x203
-        //     whether CarPlay/Waze or BMW Map is active (falls back to 'map' only if 0x202 conflict is present).
-        //   - 'map_only': never map 0x203 (leaves KOMBI4's native BC widget active); render on 'map' when wazeOn.
+        // Consistent Cluster Display Mode:
+        //   - 'panel_only' (default): all outer vitals + Right-Wing Widget + FullView/Center map on 0x203
+        //   - 'map_only': Outer Vitals Only on 0x203 (keeps outer vitals in original rim positions & preserves stock right BC widget)
+        //   (Falls back to 0x100 'map' layer overlay only if legacy 0x202 conflict blocks 0x203.)
         const rawSlotMode = s.clusterSlotMode || 'panel_only';
         const clusterSlotMode = rawSlotMode === 'map_only' ? 'map_only' : 'panel_only';
+        const isOuterOnlyMode = clusterSlotMode === 'map_only';
         const canPanel = this.canUsePanel();
         let panelAllowed = false;
         let showMapOverlay = false;
         if (wantCluster) {
-            if (clusterSlotMode === 'map_only') {
-                showMapOverlay = wazeOn;
-            } else {
-                panelAllowed = canPanel;
-                showMapOverlay = !canPanel && s.fallbackMapBar !== false && wazeOn;
-            }
+            panelAllowed = canPanel;
+            showMapOverlay = !canPanel && s.fallbackMapBar !== false && wazeOn;
         }
-        const wantHostMode = panelAllowed ? (s.mapHostMode || 'fullview_dials') : 'native';
-        const wantBezelMask = s.mapBezelMask !== false;
-        this._syncMapHost(wantHostMode, wantBezelMask, s.mapBezelFeather || 'standard');
 
-        // HUD navigation re-rendering & intersection mini-map auto-yield:
+        // HUD navigation & route state (needed before standby map rescue check):
         const hudNavMode = s.hudNavMode || 'own_nav_minimap';
         const hn = t.hudNav || null;
         const wocHudOn = Boolean(hn && hn.wocHudShowing);
@@ -882,6 +921,32 @@ class OverlayRenderer {
         const fallbackNavOn = Boolean(hn && hn.noTurnFallback);
         const routeOn = Boolean((hn && hn.routeActive) || t.navRouteActive);
         const lanesOn = Boolean((hn && hn.hasLanes) || t.navHasLanes);
+
+        // Engine-off standby rescue: if native 0x100 map slot locks while ignition/engine is OFF during routing,
+        // host map onto panel 0x203 using center-corridor mask_mode=2 until 0x100 unlocks or driving resumes.
+        this._readClusterRenderStatus(now);
+        const rawMapMode = (s.mapHostMode === 'native' || s.mapHostMode === 'center' || s.mapHostMode === 'off')
+            ? 'native'
+            : 'fullview_dials';
+        const wantHostMode = (panelAllowed && !isOuterOnlyMode) ? rawMapMode : 'native';
+        const wazeSlotLocked = Boolean(this.wazeStatus && /locked/i.test((this.wazeStatus.error || '') + ' ' + (this.wazeStatus.reason || '')));
+        const wazePresent = Boolean(wazeOn || (this.wazeStatus && this.wazeStatus.state && this.wazeStatus.state !== 'off'));
+        const drivingActive = Boolean(
+            (typeof t.rpm === 'number' && t.rpm > 100) ||
+            t.stage === 'D' ||
+            t.stage === 'R' ||
+            (typeof t.speedKmh === 'number' && t.speedKmh > 1.5)
+        );
+        if (!panelAllowed || wantHostMode !== 'native' || (!routeOn && !wazePresent)) {
+            this._standbyRescueActive = false;
+        } else if ((this.mapSlotLocked || wazeSlotLocked) && (routeOn || wazePresent)) {
+            this._standbyRescueActive = true;
+        } else if (this._standbyRescueActive && (drivingActive || this.mapTargetState === 'shown')) {
+            this._standbyRescueActive = false;
+        }
+        this.standbyRescue = this._standbyRescueActive;
+        this._syncMapHost(wantHostMode, s.mapBezelFeather || 'standard', this._standbyRescueActive);
+        const isNativeMapMode = wantHostMode === 'native';
 
         let hudYieldedToNav = false;
         let hudYieldReason = '';
@@ -922,15 +987,15 @@ class OverlayRenderer {
         const hvSocGaugeEnabled = s.hvSocGauge !== false;
         const cabinTempEnabled = s.cabinTempDisplay !== false;
         const speedMode = s.clusterSpeedOverlay;
-        const speedSettingOn = (speedMode === false || speedMode === 'off')
+        const speedSettingOn = isNativeMapMode
             ? false
-            : ((speedMode === true || speedMode === 'on') ? true : (this.hostModeActive === 'fullview'));
+            : ((speedMode === false || speedMode === 'off')
+                ? false
+                : ((speedMode === true || speedMode === 'on') ? true : (this.hostModeActive === 'fullview_dials')));
         const clusterSpeedEnabled = speedSettingOn && layoutState.widgets.speed.enabled !== false;
-        const clusterLaneEnabled = s.clusterLaneBar !== false && layoutState.widgets.lane_guidance.enabled !== false;
         const clusterTurnCardEnabled = s.clusterTurnCard !== false && layoutState.widgets.guidance_turn_card.enabled !== false;
         const clusterEtaEnabled = s.clusterEtaPill !== false && layoutState.widgets.eta_pill.enabled !== false;
         const speedPlate = s.speedPlate === 'glass' ? 'glass' : 'none';
-        const laneBarPlate = s.laneBarPlate === 'none' ? 'none' : 'glass';
         const turnCardPlate = s.turnCardPlate === 'none' ? 'none' : 'glass';
         const etaPillPlate = s.etaPillPlate === 'none' ? 'none' : 'glass';
         const cornerRightMode = resolveCornerRightMode(s.cornerRightDisplay, profile, t, hvSocGaugeEnabled);
@@ -973,7 +1038,7 @@ class OverlayRenderer {
             this._bcBase = curBcStep;
         }
         const activeAlert = (rawAlert && !this._alertDismissed) ? rawAlert : null;
-        const rightWidgetPage = !panelAllowed ? 'off'
+        const rightWidgetPage = (!panelAllowed || isOuterOnlyMode || isNativeMapMode) ? 'off'
             : (activeAlert ? 'tpms' : resolveRightWidgetPage(s, media, isCharging, this._bcBase));
 
         let hero;
@@ -1084,7 +1149,6 @@ class OverlayRenderer {
         const bsGearStr = gearDisplay === 'below_speed' ? dGearText : '';
         const showBelowSpeed = showBsLine1 || showBsLine2 || Boolean(bsGearStr);
 
-        const clusterLaneObj = (routeOn && hn && hn.lanes && Array.isArray(hn.lanes.lanes) && hn.lanes.lanes.length > 0) ? hn.lanes : null;
         const turnCardCfg = (layoutState.widgets && layoutState.widgets.guidance_turn_card) || {};
         const trigRaw = s.turnCardTriggerM !== undefined ? s.turnCardTriggerM
             : (turnCardCfg.autoTriggerDistanceMeters !== undefined ? turnCardCfg.autoTriggerDistanceMeters : 350);
@@ -1134,7 +1198,6 @@ class OverlayRenderer {
         }
 
         const showClusterSpeed = Boolean(panelAllowed && clusterSpeedEnabled);
-        const showClusterLaneBar = Boolean(panelAllowed && clusterLaneEnabled && clusterLaneObj);
         const showClusterTurnCard = Boolean(panelAllowed && clusterTurnCardEnabled && turnCardGuide);
         const clusterEtaObj = (routeOn && hn && hn.eta && (hn.eta.text || typeof hn.eta.remainMeters === 'number')) ? hn.eta : null;
         const showClusterEtaPill = Boolean(panelAllowed && clusterEtaEnabled && clusterEtaObj);
@@ -1146,8 +1209,12 @@ class OverlayRenderer {
             iceChargeActive, iceChargeKw, iceChargeLit,
             panelAllowed, showHud, showOwnHudNav, showHudRoad, showHudHeadway, hudHeadwayMode,
             showHvSocGauge, showCabinTemp,
-            showClusterSpeed, showClusterLaneBar, showClusterTurnCard, showClusterEtaPill, turnDistMeters,
+            showClusterSpeed, showClusterTurnCard, showClusterEtaPill, turnDistMeters,
             hostModeActive: this.hostModeActive,
+            userMapMode: this.userMapMode,
+            isNativeMapMode,
+            isOuterOnlyMode,
+            standbyRescue: this.standbyRescue,
             crHostLayers: this.crHostLayers,
             crHostMask: this.crHostMask,
             crRenderState: this.crRenderState,
@@ -1201,29 +1268,10 @@ class OverlayRenderer {
                 this._setVisible('speed', false);
             }
 
-            // 1a3. 5AU Top-Center Lane Guidance Strip (760..1160, 20..98 by default; wide free X/Y range)
-            if (showClusterLaneBar) {
-                const lnNx = clamp(Number(s.laneBarNudgeX) || 0, -520, 520);
-                const lnNy = clamp(Number(s.laneBarNudgeY) || 0, -20, 500);
-                const lnRect = resolveWidgetRect(layoutState, 'lane_guidance', LANE_GUIDANCE_BASE, cx + lnNx, cy + lnNy, {
-                    minX: 240, maxX: 1720 - LANE_GUIDANCE_BASE.w, minY: 0, maxY: 540,
-                });
-                const lLn = this._ensureOrLocal('lane_guidance', Object.assign({ target: 'panel', visible: true, z: 14 }, lnRect));
-                const lk = hudNavKey({ lanes: clusterLaneObj }) + '|' + laneBarPlate + '|' + lnRect.w + 'x' + lnRect.h;
-                if (lk !== lLn._renderedKey || (this.cr && !lLn.prevBuf)) {
-                    this._paintClusterLaneGuidance(lLn.cv, clusterLaneObj, laneBarPlate === 'glass');
-                    lLn._renderedKey = lk;
-                }
-                this._setVisible('lane_guidance', true);
-                this._upload('lane_guidance');
-            } else {
-                this._setVisible('lane_guidance', false);
-            }
-
-            // 1a4. Centered iOS Turn Card (760..1160, 110..214 by default; wide free X/Y range above GEAR_WIN)
+            // 1a3. Top-Center 5AU Pocket iOS Turn Card (760..1160, 18..114 by default; wide free X/Y range above GEAR_WIN)
             if (showClusterTurnCard) {
                 const tcNx = clamp(Number(s.turnCardNudgeX) || 0, -520, 520);
-                const tcNy = clamp(Number(s.turnCardNudgeY) || 0, -110, 440);
+                const tcNy = clamp(Number(s.turnCardNudgeY) || 0, -18, 500);
                 const tcRect = resolveWidgetRect(layoutState, 'guidance_turn_card', TURN_CARD_BASE, cx + tcNx, cy + tcNy, {
                     minX: 240, maxX: 1720 - TURN_CARD_BASE.w, minY: 0, maxY: 520,
                 });
@@ -2456,50 +2504,6 @@ class OverlayRenderer {
         }
     }
 
-    _paintClusterLaneGuidance(cv, lanesObj, showPlate) {
-        cv.clear(COL.clear);
-        const win = laneWindow(lanesObj);
-        if (!win || !Array.isArray(win.lanes) || !win.lanes.length) return false;
-
-        if (showPlate !== false) {
-            paintNaturalGlassPlate(cv, 16, { alpha: 168 });
-        }
-
-        const col = [242, 246, 252, 255];
-        const dim = [110, 128, 152, 215];
-        const acc = [56, 199, 255, 255];
-        const hasNext = Boolean(lanesObj.next && Array.isArray(lanesObj.next.lanes) && lanesObj.next.lanes.length > 0);
-        if (hasNext) {
-            drawLaneRow(cv, lanesObj.next, Math.round(cv.w / 2), Math.round(cv.h * 0.27), col, dim, acc, {
-                maxW: cv.w - 28,
-                cellMaxW: 32,
-                h: Math.max(20, Math.round(cv.h * 0.28)),
-                kScale: 0.86,
-                alpha: 0.72,
-                isBack: true,
-                underlineAlpha: 0,
-            });
-            cv.fillRect(28, Math.round(cv.h * 0.44), Math.max(20, cv.w - 56), 1, [255, 255, 255, 42]);
-            drawLaneRow(cv, lanesObj, Math.round(cv.w / 2), Math.round(cv.h * 0.70), col, dim, acc, {
-                maxW: cv.w - 24,
-                cellMaxW: 42,
-                h: Math.max(26, Math.round(cv.h * 0.44)),
-                kScale: 1.15,
-                alpha: 1,
-                underlineAlpha: 1,
-            });
-        } else {
-            drawLaneRow(cv, lanesObj, Math.round(cv.w / 2), Math.round(cv.h * 0.48), col, dim, acc, {
-                maxW: cv.w - 24,
-                cellMaxW: 48,
-                h: Math.min(48, Math.max(28, cv.h - 26)),
-                alpha: 1,
-                underlineAlpha: 1,
-            });
-        }
-        return true;
-    }
-
     _paintClusterTurnCard(cv, guide, units, showPlate) {
         cv.clear(COL.clear);
         if (!guide) return false;
@@ -2606,6 +2610,7 @@ class OverlayRenderer {
         this.connected = false;
         this.ready = false;
         this.hostConfigKey = '';
+        this.userMapMode = 'fullview_dials';
         this.hostModeActive = 'native';
         this.crHostLayers = false;
         this.crHostMask = false;
@@ -2613,12 +2618,16 @@ class OverlayRenderer {
         this.hostingState = '';
         this.hostingReason = '';
         this.mapHostedInto = '';
+        this.mapTargetState = '';
+        this.mapTargetReason = '';
+        this.mapSlotLocked = false;
+        this._standbyRescueActive = false;
+        this.standbyRescue = false;
         this.wazeStatus = null;
         this.bezelMaskMode = 'off';
         this.lastHudNavKey = '';
         this.lastHudRoadKey = '';
         this.lastRightWidgetKey = '';
-        this.lastLaneKey = '';
         this.lastTurnCardKey = '';
         this.lastEtaPillKey = '';
         this.lastSpeedKey = '';
@@ -2644,7 +2653,6 @@ module.exports = {
     HV_SOC_GAUGE_BASE,
     RIGHT_WIDGET_BASE,
     SPEED_BASE,
-    LANE_GUIDANCE_BASE,
     TURN_CARD_BASE,
     ETA_PILL_BASE,
     HUD_BASE,

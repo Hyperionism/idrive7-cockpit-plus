@@ -1,8 +1,8 @@
 {
   "id": "id7_cockpit_plus",
   "title": "Cockpit+",
-  "description": "Cockpit+ for BMW iDrive 7 (KOMBI4 + HUD): calibrated Cluster+ wing widgets, per-line left speed telemetry, 5AU top-center CarPlay/Baidu lane guidance, centered iOS turn card & ETA pill over hosted FullView 1632x720 map, and bold HUD navigation",
-  "version": "0.9.9",
+  "description": "Cockpit+ for BMW iDrive 7 (KOMBI4 + HUD): calibrated feathered FullView 1632x642 map keeping native dials, top-center 5AU iOS turn card & ETA pill, right-wing widgets, per-line speed telemetry, and bold HUD navigation",
+  "version": "0.9.10",
   "autostart": true,
   "license": "GPL-3.0-only",
   "vendor": "idrive7-cockpit-plus",
@@ -28,8 +28,8 @@
   "iconGlyph": "id7_cockpit_plus",
   "mguHmi": ["ID7"],
   "requires": {
-    "cluster-render": "2.9.1",
-    "waze-on-cluster": "2.9.0",
+    "cluster-render": "2.9.2",
+    "waze-on-cluster": "2.9.1",
     "cockpit-fullview": "1.0.0"
   },
   "signals": {
@@ -407,10 +407,7 @@
       "repoLink": false,
       "settings": [
         "mapHostMode",
-        "mapBezelMask",
         "mapBezelFeather",
-        "clusterLaneBar",
-        "laneBarPlate",
         "clusterTurnCard",
         "turnCardTriggerM",
         "turnCardPlate",
@@ -594,7 +591,7 @@
       "label": "Cluster display mode",
       "type": "choice",
       "default": "panel_only",
-      "reset": 3,
+      "reset": 4,
       "options": [
         [
           "panel_only",
@@ -602,7 +599,7 @@
         ],
         [
           "map_only",
-          "Center Map Area Only (keeps stock BC widgets)"
+          "Outer Vitals Only (keeps stock right BC widget)"
         ]
       ]
     },
@@ -1179,74 +1176,42 @@
       "label": "Full-screen CarPlay map host",
       "type": "choice",
       "default": "fullview_dials",
-      "reset": 2,
+      "reset": 3,
       "options": [
         [
           "fullview_dials",
-          "FullView + Native Dials (alpha cutout, default)"
-        ],
-        [
-          "fullview",
-          "FullView Wide 1632px (covers dials)"
+          "FullView Map (alpha cutout, default)"
         ],
         [
           "native",
-          "Native Center 1088x480 (behind dials, zero occlusion)"
+          "Center Small Map (native dials & right BC)"
         ]
       ]
-    },
-    {
-      "key": "mapBezelMask",
-      "label": "Transparent curved bezel cutout (Wide mode)",
-      "type": "bool",
-      "default": true,
-      "reset": 3
     },
     {
       "key": "mapBezelFeather",
       "label": "Bezel fade width",
       "type": "choice",
       "default": "standard",
+      "reset": 2,
       "options": [
         [
           "standard",
-          "Standard 54 px (default)"
+          "Standard 76 px (default)"
         ],
         [
           "tight",
-          "Compact 36 px (wider map)"
+          "Compact 56 px (wider map)"
         ],
         [
           "wide",
-          "Soft 80 px (wider fade)"
-        ]
-      ]
-    },
-    {
-      "key": "clusterLaneBar",
-      "label": "5AU top-center lane guidance",
-      "type": "bool",
-      "default": true
-    },
-    {
-      "key": "laneBarPlate",
-      "label": "5AU lane bar background",
-      "type": "choice",
-      "default": "glass",
-      "options": [
-        [
-          "glass",
-          "Translucent glass"
-        ],
-        [
-          "none",
-          "Frameless (no background)"
+          "Soft 104 px (wider fade)"
         ]
       ]
     },
     {
       "key": "clusterTurnCard",
-      "label": "Center iOS turn card (near turns)",
+      "label": "Top-center iOS turn card (5AU pocket)",
       "type": "bool",
       "default": true
     },
@@ -1325,7 +1290,7 @@
       "options": [
         [
           "auto",
-          "Auto (Wide mode only, avoids double speed)"
+          "Auto (FullView map only)"
         ],
         [
           "on",
@@ -1354,41 +1319,6 @@
       ]
     },
     {
-      "key": "laneBarNudgeX",
-      "label": "5AU lane bar X offset",
-      "type": "number",
-      "unit": "px",
-      "default": 0,
-      "steps": [
-        -120,
-        -60,
-        -30,
-        -10,
-        0,
-        10,
-        30,
-        60,
-        120
-      ]
-    },
-    {
-      "key": "laneBarNudgeY",
-      "label": "5AU lane bar Y offset",
-      "type": "number",
-      "unit": "px",
-      "default": 0,
-      "steps": [
-        -16,
-        -8,
-        0,
-        8,
-        16,
-        32,
-        48,
-        64
-      ]
-    },
-    {
       "key": "turnCardNudgeX",
       "label": "Turn card X offset",
       "type": "number",
@@ -1411,14 +1341,14 @@
       "unit": "px",
       "default": 0,
       "steps": [
-        -40,
-        -20,
+        -18,
+        -10,
         0,
+        10,
         20,
         40,
         80,
-        120,
-        160
+        120
       ]
     },
     {
@@ -1495,11 +1425,7 @@
       "options": [
         [
           "turn_card",
-          "Center iOS turn card"
-        ],
-        [
-          "lane_bar",
-          "5AU top lane bar"
+          "Top-center iOS turn card"
         ],
         [
           "eta_pill",

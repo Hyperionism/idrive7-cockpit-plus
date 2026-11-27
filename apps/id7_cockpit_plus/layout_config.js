@@ -4,7 +4,7 @@
  *
  * Right-wing widget geometry (`right_widget`) is intentionally excluded from manual
  * override to preserve chyiz v0.9.3's calibrated KOMBI4 right-wing homography mask.
- * All other cluster overlays (5AU top lane bar, iOS turn card, ETA pill, frameless speed,
+ * All other cluster overlays (top-center iOS turn card, ETA pill, frameless speed,
  * below_speed, corner vitals, brake rail, gear badge, cabin temp, HV SoC gauge) support
  * manual coordinates via this file, optional /var/opt/cluster-render/cockpit_layout.json,
  * and native iDrive RHMI nudge settings.
@@ -30,19 +30,12 @@ const LEGACY_ALIASES = {
 };
 
 const DEFAULT_LAYOUT = {
-    lane_guidance: {
-        enabled: true,
-        x: 760,
-        y: 20,
-        w: 400,
-        h: 78,
-    },
     guidance_turn_card: {
         enabled: true,
         x: 760,
-        y: 110,
+        y: 18,
         w: 400,
-        h: 104,
+        h: 96,
         autoTriggerDistanceMeters: 350,
         dismissDelaySeconds: 2.5,
     },
