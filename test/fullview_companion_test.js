@@ -138,7 +138,7 @@ function testActivateNoOpWhenWazeAbsent() {
 
 function testAppRequiresAndSchema2Catalog() {
   const appJson = JSON.parse(fs.readFileSync(path.join(ROOT, 'apps', 'id7_cockpit_plus', 'app.json'), 'utf8'));
-  assert.strictEqual(appJson.requires['cluster-render'], '2.9.4');
+  assert.strictEqual(appJson.requires['cluster-render'], '2.9.5');
   assert.strictEqual(appJson.requires['waze-on-cluster'], '2.9.2');
   assert.strictEqual(appJson.requires['cockpit-fullview'], '1.0.0');
 
@@ -303,7 +303,7 @@ function testFullviewUpstreamPatcherAndExtraCatalog() {
   );
 
   const res = patchIdriveApps(idriveRoot);
-  assert.strictEqual(res.clusterRenderVersion, '2.9.4');
+  assert.strictEqual(res.clusterRenderVersion, '2.9.5');
   assert.strictEqual(res.wazeOnClusterVersion, '2.9.2');
   assert.strictEqual(res.robertnWazeAppVersion, '0.6.17');
   assert.strictEqual(fs.readFileSync(path.join(crDir, 'kit', 'yuv_atlas.cpp'), 'utf8'), origAtlas, 'kit/yuv_atlas.cpp must stay untouched for upstream TraceGpu shader hash parity');
@@ -312,7 +312,7 @@ function testFullviewUpstreamPatcherAndExtraCatalog() {
   assert.ok(fs.readFileSync(path.join(crDir, 'src', 'video_layer.h'), 'utf8').includes('masked_quads_'));
   const vlCppOut = fs.readFileSync(path.join(crDir, 'src', 'video_layer.cpp'), 'utf8');
   assert.ok(vlCppOut.includes('if (ma <= 0.002) discard;'));
-  assert.ok(vlCppOut.includes('smin_m') && vlCppOut.includes('808.0 - 191.2') && vlCppOut.includes('browY = 91.0') && vlCppOut.includes('botY = 664.0 - 65.0') && vlCppOut.includes('468.0') && vlCppOut.includes('sdSpd'));
+  assert.ok(vlCppOut.includes('smin_m') && vlCppOut.includes('808.0 - 191.2') && vlCppOut.includes('browY = 91.0') && vlCppOut.includes('botY = 664.0 - 65.0') && vlCppOut.includes('qTop') && vlCppOut.includes('topY = mix(20.0') && vlCppOut.includes('132.0 * dy * dy') && vlCppOut.includes('120.0 - wy') && vlCppOut.includes('wy - 600.0') && vlCppOut.includes('sdSpd'));
   assert.ok(vlCppOut.includes('VideoLayer::set_mask()'));
   assert.ok(fs.readFileSync(path.join(crDir, 'src', 'compositor.h'), 'utf8').includes('mask_effects()'));
   assert.ok(fs.readFileSync(path.join(crDir, 'src', 'compositor.cpp'), 'utf8').includes('Compositor::mask_effects()'));
@@ -414,41 +414,48 @@ function testOverlayRendererFullviewMapHost() {
   assert.strictEqual(calls.hosts[calls.hosts.length - 1].opts.mask_mode, 1);
   assert.strictEqual(calls.hosts[calls.hosts.length - 1].opts.mask_feather, 130);
 
-  // 3. Center Small Map ('native'/'center'/'off') during driving releases panel 0x203 and unhosts back to 0x100
-  // so BMW KOMBI4 restores genuine stock right-wing BC card (slot 0x200), with zero software-redrawn right_widget/speed!
-  r.render(model, { enabled: true, clusterSlotMode: 'panel_only', mapHostMode: 'native', mapBezelFeather: 'tight', clusterSpeedOverlay: 'on' }, 1100);
-  assert.strictEqual(r.lastSummary.nativePanelReleased, true);
-  assert.strictEqual(r.lastSummary.panelAllowed, false);
-  assert.strictEqual(r.lastSummary.hostModeActive, 'native');
-  assert.strictEqual(r.lastSummary.bezelMaskMode, 'off');
-  assert.strictEqual(r.lastSummary.showClusterSpeed, false, 'Center Small Map must hide redrawn speed');
-  assert.strictEqual(r.lastSummary.rightWidgetPage, 'off', 'Center Small Map must disable software right_widget');
-  assert.ok(calls.unhosts.includes('map'), 'Center Small Map must unhost back to 0x100');
-  for (const lname of ['corner_left', 'corner_right', 'below_speed', 'right_widget', 'speed']) {
-    if (r.layers[lname]) assert.strictEqual(r.layers[lname].visible, false, `${lname} must be hidden when 0x203 is released`);
-  }
+  // 2b. Custom feather width ('custom' + mapBezelFeatherCustomPx = 44 -> sends mask_feather: 44)
+  r.render(model, { enabled: true, clusterSlotMode: 'panel_only', mapHostMode: 'fullview_dials', mapBezelFeather: 'custom', mapBezelFeatherCustomPx: 44 }, 1090);
+  assert.strictEqual(calls.hosts[calls.hosts.length - 1].opts.mask_mode, 1);
+  assert.strictEqual(calls.hosts[calls.hosts.length - 1].opts.mask_feather, 44);
 
-  // 3b. Engine-off standby in Center Small Map wakes 0x203 with mask_mode: 3 (still NO software right card or redrawn speed)
-  const standbyModel = { units, profile, telemetry: { speedKmh: 0, rpm: 0, stage: null, navRouteActive: true }, efficiency: {} };
-  r.render(standbyModel, { enabled: true, clusterSlotMode: 'panel_only', mapHostMode: 'native' }, 1150);
-  assert.strictEqual(r.lastSummary.standbyRescue, true);
+  // 3. Center Small Map ('center_panel' / legacy 'center') keeps panel 0x203 active in BOTH driving (mask_mode: 2)
+  // and engine-off (mask_mode: 3), keeping outer vitals + BC right_widget alive and hiding redrawn speed!
+  r.render(model, { enabled: true, clusterSlotMode: 'panel_only', mapHostMode: 'center_panel', mapBezelFeather: 'custom', mapBezelFeatherCustomPx: 72, clusterSpeedOverlay: 'on' }, 1100);
+  assert.strictEqual(r.lastSummary.isCenterPanelMode, true);
+  assert.strictEqual(r.lastSummary.panelAllowed, true);
+  assert.strictEqual(r.lastSummary.hostModeActive, 'center_masked');
+  assert.strictEqual(r.lastSummary.bezelMaskMode, 'center');
+  assert.strictEqual(calls.hosts[calls.hosts.length - 1].opts.mask_mode, 2);
+  assert.strictEqual(calls.hosts[calls.hosts.length - 1].opts.mask_feather, 72);
+  assert.strictEqual(r.lastSummary.showClusterSpeed, false, 'Center Small Map must hide redrawn speed');
+  assert.notStrictEqual(r.lastSummary.rightWidgetPage, 'off', 'center_panel keeps Cockpit+ BC right_widget active');
+
+  // 3b. Engine-off in center_panel switches smoothly to symmetric mask_mode: 3 while keeping 0x203 & right_widget alive
+  const parkedCenterModel = { units, profile, telemetry: { speedKmh: 0, rpm: 0, stage: null, navRouteActive: true }, efficiency: {} };
+  r.render(parkedCenterModel, { enabled: true, clusterSlotMode: 'panel_only', mapHostMode: 'center_panel' }, 1130);
   assert.strictEqual(r.lastSummary.panelAllowed, true);
   assert.strictEqual(r.lastSummary.hostModeActive, 'standby_center');
   assert.strictEqual(r.lastSummary.bezelMaskMode, 'standby');
   assert.strictEqual(calls.hosts[calls.hosts.length - 1].opts.mask_mode, 3);
-  assert.strictEqual(r.lastSummary.rightWidgetPage, 'off');
-  assert.strictEqual(r.lastSummary.showClusterSpeed, false);
+  assert.notStrictEqual(r.lastSummary.rightWidgetPage, 'off');
 
-  // 3c. Engine restarts -> clears standby rescue, releases 0x203, and restores stock 0x200 BC card again
-  const restartModel = { units, profile, telemetry: { speedKmh: 0, rpm: 850, stage: 'D', gear: 1, navRouteActive: true }, efficiency: {} };
-  const unhostBefore = calls.unhosts.length;
-  r.render(restartModel, { enabled: true, clusterSlotMode: 'panel_only', mapHostMode: 'native' }, 1180);
-  assert.strictEqual(r.lastSummary.standbyRescue, false);
-  assert.strictEqual(r.lastSummary.nativePanelReleased, true);
-  assert.strictEqual(r.lastSummary.panelAllowed, false);
-  assert.strictEqual(r.lastSummary.hostModeActive, 'native');
-  assert.strictEqual(r.lastSummary.bezelMaskMode, 'off');
-  assert.ok(calls.unhosts.length > unhostBefore && calls.unhosts[calls.unhosts.length - 1] === 'map');
+  // 3c. Pure Stock Mode ('native' / legacy 'off') releases panel 0x203 and unhosts to 0x100 in BOTH driving & engine-off
+  // so BMW KOMBI4 restores genuine stock 0x100 map + 0x200 right BC card!
+  for (const mTest of [model, parkedCenterModel]) {
+    r.render(mTest, { enabled: true, clusterSlotMode: 'panel_only', mapHostMode: 'native', clusterSpeedOverlay: 'on' }, 1160);
+    assert.strictEqual(r.lastSummary.isPureNativeMode, true);
+    assert.strictEqual(r.lastSummary.nativePanelReleased, true);
+    assert.strictEqual(r.lastSummary.panelAllowed, false);
+    assert.strictEqual(r.lastSummary.hostModeActive, 'native');
+    assert.strictEqual(r.lastSummary.bezelMaskMode, 'off');
+    assert.strictEqual(r.lastSummary.rightWidgetPage, 'off');
+    assert.strictEqual(r.lastSummary.showClusterSpeed, false);
+    assert.ok(calls.unhosts.includes('map'), 'Pure Stock Mode must unhost back to 0x100');
+    for (const lname of ['corner_left', 'corner_right', 'below_speed', 'right_widget', 'speed']) {
+      if (r.layers[lname]) assert.strictEqual(r.layers[lname].visible, false, `${lname} must be hidden in Pure Stock Mode`);
+    }
+  }
 
   // 4. Disabled unhost check
   r.render(model, { enabled: false, clusterSlotMode: 'panel_only', mapHostMode: 'native' }, 1200);
@@ -551,7 +558,7 @@ function testSimplifiedChineseLocaleAndPackage() {
   assert.ok(fs.existsSync(builtLocalePath), 'zh-CN release build must emit kit/locale.json');
   const builtLocale = JSON.parse(fs.readFileSync(builtLocalePath, 'utf8'));
   assert.strictEqual(builtLocale.language, 'zh-CN');
-  assert.strictEqual(builtLocale.strings['Full-screen CarPlay map host'], '全屏 CarPlay 地图托管模式');
+  assert.strictEqual(builtLocale.strings['Full-screen CarPlay map host'], '仪表地图显示模式');
   assert.strictEqual(builtLocale.strings['TIRE PRESSURE & TEMP'], '胎压与胎温');
 
   const appTgz = path.join(ROOT, 'dist', `id7_cockpit_plus@${appSpec.version}.tgz`);
@@ -563,7 +570,7 @@ function testSimplifiedChineseLocaleAndPackage() {
   assert.ok(zhBundleEntry, 'zh-CN package must include rhmiData/variantGroups/Common/texts/zh_CN.json');
   const bundleStrings = JSON.parse(zhBundleEntry.toString('utf8'));
   const vals = Object.values(bundleStrings);
-  assert.ok(vals.includes('通用设置') && vals.includes('全屏地图与导航布局'), 'RHMI StringBundle must contain Simplified Chinese titles');
+  assert.ok(vals.includes('通用设置') && vals.includes('地图模式与导航卡片设置'), 'RHMI StringBundle must contain Simplified Chinese titles');
   assert.ok(Object.prototype.hasOwnProperty.call(bundleStrings, 'SID_CN_DYNAMIC_0000'), 'SID_CN_DYNAMIC pool must be pre-allocated');
 
   // Verify 100% of app.json UI strings have zh-CN translations
