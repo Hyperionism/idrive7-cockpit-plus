@@ -1,6 +1,6 @@
 {
   "name": "idrive7-cockpit-plus",
-  "version": "0.9.6",
+  "version": "0.9.7",
   "private": true,
   "description": "Cockpit+ overlay suite for BMW iDrive 7 (MGU): Cluster+ calibrated right wing, per-line left vitals, 5AU top lane bar, iOS turn card, arrival ETA pill, and bold HUD nav",
   "license": "GPL-3.0-only",
