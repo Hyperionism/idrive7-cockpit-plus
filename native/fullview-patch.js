@@ -18,7 +18,7 @@ const UPSTREAM_PINS = {
   idriveAppsCommit: '9da968c8644ef4f6bcce174b0836f9f24d8db7fb',
   mguStoreRepo: 'robertnisipeanu/mgu-store',
   mguStoreCommit: '37702a880f1ed5fd346f4c944127fb276920be9c',
-  clusterRenderVersion: '2.9.0',
+  clusterRenderVersion: '2.9.1',
   wazeOnClusterVersion: '2.9.0',
   robertnWazeAppVersion: '0.6.17',
   mguRenderVersion: '0.6.26'
@@ -66,6 +66,309 @@ function patchMapGeometry(crDir) {
   }
 }
 
+const HOST_MASK_GLSL_BLOCK = [
+  '    float ma = 1.0;',
+  '    if (u_mask.x > 0.5) {',
+  '        float wx = u_mask.z + v_uv.x * u_mask_sz.x;',
+  '        float wy = u_mask.w + v_uv.y * u_mask_sz.y;',
+  '        float ax = abs(wx - 960.0);',
+  '        float fPx = clamp(u_mask.y > 1.0 ? u_mask.y : 54.0, 16.0, 120.0);',
+  '        float botA = 1.0 - smoothstep(616.0 - max(36.0, fPx * 0.8), 614.0, wy);',
+  '        if (u_mask.x < 1.5) {',
+  '            float halfW = 232.0;',
+  '            if (wy >= 95.0 && wy < 345.0) {',
+  '                halfW = mix(232.0, 372.0, smoothstep(0.0, 1.0, (wy - 95.0) / 250.0));',
+  '            } else if (wy >= 345.0) {',
+  '                halfW = mix(372.0, 268.0, smoothstep(0.0, 1.0, clamp((wy - 345.0) / 263.0, 0.0, 1.0)));',
+  '            }',
+  '            float sideA = 1.0 - smoothstep(halfW - fPx, halfW, ax);',
+  '            float topA = smoothstep(0.0, 14.0, wy);',
+  '            ma = min(min(sideA, botA), topA);',
+  '        } else {',
+  '            float nx = ax / 800.0;',
+  '            float ny = (wy - 308.0) / 308.0;',
+  '            float dOuter = pow(pow(max(nx, 0.0001), 3.2) + pow(max(abs(ny), 0.0001), 3.2), 1.0 / 3.2);',
+  '            float fNorm = clamp(fPx / 800.0, 0.03, 0.14);',
+  '            float outerA = 1.0 - smoothstep(1.0 - fNorm, 1.0, dOuter);',
+  '            ma = min(outerA, botA);',
+  '        }',
+  '        if (ma <= 0.002) discard;',
+  '    }'
+].join('\n');
+
+function patchHostVideoMask(crDir) {
+  // 1. kit/yuv_atlas.cpp: alpha mask + discard inside kAtlasFragmentShader
+  const atlasPath = path.join(crDir, 'kit', 'yuv_atlas.cpp');
+  let atlas = fs.readFileSync(atlasPath, 'utf8');
+  if (atlas.indexOf('u_mask_sz') === -1) {
+    atlas = replaceExactOrThrow(
+      atlas,
+      'uniform vec2 u_size;\nuniform float u_opacity;\nvarying vec2 v_uv;',
+      'uniform vec2 u_size;\nuniform float u_opacity;\nuniform vec4 u_mask;\nuniform vec2 u_mask_sz;\nvarying vec2 v_uv;',
+      'kit/yuv_atlas.cpp uniforms'
+    );
+    atlas = replaceExactOrThrow(
+      atlas,
+      '    vec3 rgb = vec3(y + 1.402 * v, y - 0.344136 * u - 0.714136 * v, y + 1.772 * u);\n    gl_FragColor = vec4(clamp(rgb, 0.0, 1.0), u_opacity);',
+      '    vec3 rgb = vec3(y + 1.402 * v, y - 0.344136 * u - 0.714136 * v, y + 1.772 * u);\n' +
+        HOST_MASK_GLSL_BLOCK + '\n' +
+        '    gl_FragColor = vec4(clamp(rgb, 0.0, 1.0), u_opacity * ma);',
+      'kit/yuv_atlas.cpp shader body'
+    );
+    fs.writeFileSync(atlasPath, atlas, 'utf8');
+  }
+
+  // 2. kit/block_pack.cpp: identical alpha mask + discard inside kBlockFragmentShader
+  const blockPath = path.join(crDir, 'kit', 'block_pack.cpp');
+  let block = fs.readFileSync(blockPath, 'utf8');
+  if (block.indexOf('u_mask_sz') === -1) {
+    block = replaceExactOrThrow(
+      block,
+      'uniform vec2 u_size;\nuniform float u_opacity;\nvarying vec2 v_uv;',
+      'uniform vec2 u_size;\nuniform float u_opacity;\nuniform vec4 u_mask;\nuniform vec2 u_mask_sz;\nvarying vec2 v_uv;',
+      'kit/block_pack.cpp uniforms'
+    );
+    block = replaceExactOrThrow(
+      block,
+      '    vec3 c = sel < 0.5 ? c0 : sel < 1.5 ? c1 : sel < 2.5 ? (2.0 * c0 + c1) / 3.0 : (c0 + 2.0 * c1) / 3.0;\n    gl_FragColor = vec4(c, u_opacity);',
+      '    vec3 c = sel < 0.5 ? c0 : sel < 1.5 ? c1 : sel < 2.5 ? (2.0 * c0 + c1) / 3.0 : (c0 + 2.0 * c1) / 3.0;\n' +
+        HOST_MASK_GLSL_BLOCK + '\n' +
+        '    gl_FragColor = vec4(c, u_opacity * ma);',
+      'kit/block_pack.cpp shader body'
+    );
+    fs.writeFileSync(blockPath, block, 'utf8');
+  }
+
+  // 3. src/video_layer.h: mask_mode & mask_feather fields + has_mask() / any() + set_mask()
+  const vlHPath = path.join(crDir, 'src', 'video_layer.h');
+  let vlH = fs.readFileSync(vlHPath, 'utf8');
+  if (vlH.indexOf('has_mask()') === -1) {
+    vlH = replaceExactOrThrow(
+      vlH,
+      [
+        'struct VideoEdge {',
+        '    uint32_t top = 0, bottom = 0, fade = 0, dim = 0, blur = 0;',
+        '    bool on() const { return top || bottom; }',
+        '    bool operator==(const VideoEdge &o) const',
+        '    {',
+        '        return top == o.top && bottom == o.bottom && fade == o.fade && dim == o.dim && blur == o.blur;',
+        '    }',
+        '    bool operator!=(const VideoEdge &o) const { return !(*this == o); }',
+        '};'
+      ].join('\n'),
+      [
+        'struct VideoEdge {',
+        '    uint32_t top = 0, bottom = 0, fade = 0, dim = 0, blur = 0, mask_mode = 0, mask_feather = 54;',
+        '    bool on() const { return top || bottom; }',
+        '    bool has_mask() const { return mask_mode > 0; }',
+        '    bool any() const { return on() || has_mask(); }',
+        '    bool operator==(const VideoEdge &o) const',
+        '    {',
+        '        return top == o.top && bottom == o.bottom && fade == o.fade && dim == o.dim && blur == o.blur &&',
+        '               mask_mode == o.mask_mode && mask_feather == o.mask_feather;',
+        '    }',
+        '    bool operator!=(const VideoEdge &o) const { return !(*this == o); }',
+        '};'
+      ].join('\n'),
+      'src/video_layer.h VideoEdge'
+    );
+    vlH = replaceExactOrThrow(
+      vlH,
+      '    void make_edge_quads();\n    void drop_edge_quads();',
+      '    void make_edge_quads();\n    void drop_edge_quads();\n    void set_mask();',
+      'src/video_layer.h set_mask'
+    );
+    fs.writeFileSync(vlHPath, vlH, 'utf8');
+  }
+
+  // 4. src/video_layer.cpp: bind u_mask/u_mask_sz, update in set_edge()/place(), skip opaque occlude() when masked
+  const vlCppPath = path.join(crDir, 'src', 'video_layer.cpp');
+  let vlCpp = fs.readFileSync(vlCppPath, 'utf8');
+  if (vlCpp.indexOf('VideoLayer::set_mask()') === -1) {
+    vlCpp = replaceExactOrThrow(
+      vlCpp,
+      'if (g_ && s.drawn && opaque_ && s.opacity * s.fade >= 1.0f && !s.turned)',
+      'if (g_ && s.drawn && opaque_ && s.opacity * s.fade >= 1.0f && !s.turned && !edge_.has_mask())',
+      'src/video_layer.cpp occlude'
+    );
+    vlCpp = replaceExactOrThrow(
+      vlCpp,
+      [
+        'bool VideoLayer::make_atlas_quads(Graph *g)',
+        '{',
+        '    const float size[2] = {(float)p_.w, (float)p_.h}, zero = 0.0f;',
+        '    atlas_quad_ = g->quad(atlas_effect_, drawn_params().rect);',
+        '    return atlas_quad_ && g->turn(atlas_quad_, drawn_params().turn()) && g->texture(atlas_quad_, "u_image", atlas_buf_) &&',
+        '           g->uniform(atlas_quad_, "u_size", size, 2) && g->uniform(atlas_quad_, "u_opacity", &zero, 1) &&',
+        '           g->show(atlas_quad_, false) && g->order(atlas_quad_, order_);',
+        '}',
+        '',
+        'bool VideoLayer::make_block_quads(Graph *g)',
+        '{',
+        '    const float size[2] = {(float)p_.w, (float)p_.h}, zero = 0.0f;',
+        '    block_quad_ = g->quad(block_effect_, drawn_params().rect);',
+        '    return block_quad_ && g->turn(block_quad_, drawn_params().turn()) && g->texture(block_quad_, "u_image", block_buf_[0]) &&',
+        '           g->uniform(block_quad_, "u_size", size, 2) && g->uniform(block_quad_, "u_opacity", &zero, 1) &&',
+        '           g->show(block_quad_, false) && g->order(block_quad_, order_ + 1);',
+        '}',
+        '',
+        'void VideoLayer::drop_quads()',
+        '{',
+        '    if (atlas_quad_) g_->drop_quad(atlas_quad_);',
+        '    if (block_quad_) g_->drop_quad(block_quad_);',
+        '    drop_edge_quads();',
+        '}',
+        '',
+        'bool VideoLayer::set_edge(const VideoEdge &e, int atlas_effect, int block_effect)',
+        '{',
+        '    if (e == edge_ && (!e.on() || (atlas_effect == edge_fx_[0] && block_effect == edge_fx_[1])))',
+        '        return false;',
+        '    edge_ = e;',
+        '    edge_fx_[0] = atlas_effect;',
+        '    edge_fx_[1] = block_effect;',
+        '    if (g_) {',
+        '        drop_edge_quads();',
+        '        make_edge_quads();',
+        '    }',
+        '    return true;',
+        '}'
+      ].join('\n'),
+      [
+        'bool VideoLayer::make_atlas_quads(Graph *g)',
+        '{',
+        '    const Rect r = drawn_params().rect;',
+        '    const float size[2] = {(float)p_.w, (float)p_.h}, zero = 0.0f;',
+        '    const float mask[4] = {(float)edge_.mask_mode, (float)edge_.mask_feather, (float)r.x, (float)r.y};',
+        '    const float mask_sz[2] = {(float)r.w, (float)r.h};',
+        '    atlas_quad_ = g->quad(atlas_effect_, r);',
+        '    return atlas_quad_ && g->turn(atlas_quad_, drawn_params().turn()) && g->texture(atlas_quad_, "u_image", atlas_buf_) &&',
+        '           g->uniform(atlas_quad_, "u_size", size, 2) && g->uniform(atlas_quad_, "u_opacity", &zero, 1) &&',
+        '           g->uniform(atlas_quad_, "u_mask", mask, 4) && g->uniform(atlas_quad_, "u_mask_sz", mask_sz, 2) &&',
+        '           g->show(atlas_quad_, false) && g->order(atlas_quad_, order_);',
+        '}',
+        '',
+        'bool VideoLayer::make_block_quads(Graph *g)',
+        '{',
+        '    const Rect r = drawn_params().rect;',
+        '    const float size[2] = {(float)p_.w, (float)p_.h}, zero = 0.0f;',
+        '    const float mask[4] = {(float)edge_.mask_mode, (float)edge_.mask_feather, (float)r.x, (float)r.y};',
+        '    const float mask_sz[2] = {(float)r.w, (float)r.h};',
+        '    block_quad_ = g->quad(block_effect_, r);',
+        '    return block_quad_ && g->turn(block_quad_, drawn_params().turn()) && g->texture(block_quad_, "u_image", block_buf_[0]) &&',
+        '           g->uniform(block_quad_, "u_size", size, 2) && g->uniform(block_quad_, "u_opacity", &zero, 1) &&',
+        '           g->uniform(block_quad_, "u_mask", mask, 4) && g->uniform(block_quad_, "u_mask_sz", mask_sz, 2) &&',
+        '           g->show(block_quad_, false) && g->order(block_quad_, order_ + 1);',
+        '}',
+        '',
+        'void VideoLayer::set_mask()',
+        '{',
+        '    if (!g_ || !atlas_quad_)',
+        '        return;',
+        '    const Rect r = drawn_params().rect;',
+        '    const float mask[4] = {(float)edge_.mask_mode, (float)edge_.mask_feather, (float)r.x, (float)r.y};',
+        '    const float mask_sz[2] = {(float)r.w, (float)r.h};',
+        '    g_->uniform(atlas_quad_, "u_mask", mask, 4);',
+        '    g_->uniform(atlas_quad_, "u_mask_sz", mask_sz, 2);',
+        '    if (block_quad_) {',
+        '        g_->uniform(block_quad_, "u_mask", mask, 4);',
+        '        g_->uniform(block_quad_, "u_mask_sz", mask_sz, 2);',
+        '    }',
+        '}',
+        '',
+        'void VideoLayer::drop_quads()',
+        '{',
+        '    if (atlas_quad_) g_->drop_quad(atlas_quad_);',
+        '    if (block_quad_) g_->drop_quad(block_quad_);',
+        '    drop_edge_quads();',
+        '}',
+        '',
+        'bool VideoLayer::set_edge(const VideoEdge &e, int atlas_effect, int block_effect)',
+        '{',
+        '    if (e == edge_ && (!e.on() || (atlas_effect == edge_fx_[0] && block_effect == edge_fx_[1])))',
+        '        return false;',
+        '    edge_ = e;',
+        '    edge_fx_[0] = atlas_effect;',
+        '    edge_fx_[1] = block_effect;',
+        '    if (g_) {',
+        '        set_mask();',
+        '        drop_edge_quads();',
+        '        make_edge_quads();',
+        '    }',
+        '    return true;',
+        '}'
+      ].join('\n'),
+      'src/video_layer.cpp quads/set_edge'
+    );
+    vlCpp = replaceExactOrThrow(
+      vlCpp,
+      '    if (edge_.on() && drawn_params().rect != edge_at_) {   /* the edge\'s quads and blur follow the rect */\n        drop_edge_quads();\n        make_edge_quads();\n    }\n    set_opacity();',
+      '    if (edge_.on() && drawn_params().rect != edge_at_) {   /* the edge\'s quads and blur follow the rect */\n        drop_edge_quads();\n        make_edge_quads();\n    }\n    set_mask();\n    set_opacity();',
+      'src/video_layer.cpp place'
+    );
+    fs.writeFileSync(vlCppPath, vlCpp, 'utf8');
+  }
+
+  // 5. src/compositor.cpp: propagate mask_mode/mask_feather via edge_for() even without edge_effects()
+  const compPath = path.join(crDir, 'src', 'compositor.cpp');
+  let comp = fs.readFileSync(compPath, 'utf8');
+  if (comp.indexOf('edge.any()') === -1) {
+    comp = replaceExactOrThrow(
+      comp,
+      '                if (ed.on() && !edge_effects())\n                    ed = VideoEdge();',
+      '                if (ed.on() && !edge_effects())\n                    ed.top = ed.bottom = ed.fade = ed.dim = ed.blur = 0;',
+      'src/compositor.cpp arrange'
+    );
+    comp = replaceExactOrThrow(
+      comp,
+      'if (!h.shown || !h.edge.on() || x0 < h.rect.x',
+      'if (!h.shown || !h.edge.any() || x0 < h.rect.x',
+      'src/compositor.cpp scene host'
+    );
+    comp = replaceExactOrThrow(
+      comp,
+      'return lh && lh->host.edge.on() ? clamped(lh->host.edge) : VideoEdge();',
+      'return lh && lh->host.edge.any() ? clamped(lh->host.edge) : VideoEdge();',
+      'src/compositor.cpp layer host'
+    );
+    fs.writeFileSync(compPath, comp, 'utf8');
+  }
+
+  // 6. src/server.cpp: advertise host_mask=1 & parse mask_mode / mask_feather in op_host()
+  const srvPath = path.join(crDir, 'src', 'server.cpp');
+  let srv = fs.readFileSync(srvPath, 'utf8');
+  if (srv.indexOf('"host_mask"') === -1) {
+    srv = replaceExactOrThrow(
+      srv,
+      '{"host_edge", "1"},',
+      '{"host_edge", "1"},\n                                 {"host_mask", "1"},',
+      'src/server.cpp hello'
+    );
+    srv = replaceExactOrThrow(
+      srv,
+      [
+        '    static const char *const edge_keys[] = {"edge_top", "edge_bottom", "edge_fade", "edge_dim", "edge_blur"};',
+        '    static const double edge_max[] = {720, 720, 360, 4096, 32};',
+        '    double ev[5] = {0, 0, 0, 0, 0};',
+        '    for (size_t i = 0; i < 5; i++)'
+      ].join('\n'),
+      [
+        '    static const char *const edge_keys[] = {"edge_top", "edge_bottom", "edge_fade", "edge_dim", "edge_blur", "mask_mode", "mask_feather"};',
+        '    static const double edge_max[] = {720, 720, 360, 4096, 32, 2, 120};',
+        '    double ev[7] = {0, 0, 0, 0, 0, 0, 54};',
+        '    for (size_t i = 0; i < 7; i++)'
+      ].join('\n'),
+      'src/server.cpp edge_keys'
+    );
+    srv = replaceExactOrThrow(
+      srv,
+      '    h.edge.dim = (uint32_t)ev[3];\n    h.edge.blur = (uint32_t)ev[4];',
+      '    h.edge.dim = (uint32_t)ev[3];\n    h.edge.blur = (uint32_t)ev[4];\n    h.edge.mask_mode = (uint32_t)ev[5];\n    h.edge.mask_feather = (uint32_t)ev[6];',
+      'src/server.cpp host edge assign'
+    );
+    fs.writeFileSync(srvPath, srv, 'utf8');
+  }
+}
+
 function patchIdriveApps(rootDir) {
   const crDir = path.join(rootDir, 'native', 'cluster-render');
   const wocDir = path.join(rootDir, 'native', 'waze-on-cluster');
@@ -73,6 +376,8 @@ function patchIdriveApps(rootDir) {
 
   // 1. Unlock native 1632x720 map texture ceiling while keeping 1088x480 map_quad default
   patchMapGeometry(crDir);
+  // 1b. Embed alpha-cutout dial/bezel mask + discard directly in video shaders so KOMBI4 dials stay 100% intact
+  patchHostVideoMask(crDir);
 
   // 2. Bump cluster-render SemVer cleanly (> 2.0.29 forks) & ensure uninstallable in MGU Store
   const crCompPath = path.join(crDir, 'component.json');
@@ -164,7 +469,7 @@ function patchIdriveApps(rootDir) {
   wocComp.version = UPSTREAM_PINS.wazeOnClusterVersion;
   wocComp.uninstallable = true;
   wocComp.requires = Object.assign({}, wocComp.requires || {}, {
-    'cluster-render': UPSTREAM_PINS.clusterRenderVersion
+    'cluster-render': '2.9.0'
   });
   fs.writeFileSync(wocCompPath, JSON.stringify(wocComp, null, 2) + '\n', 'utf8');
 
@@ -243,6 +548,7 @@ if (require.main === module) {
 module.exports = {
   UPSTREAM_PINS,
   patchMapGeometry,
+  patchHostVideoMask,
   patchIdriveApps,
   patchMguStore
 };
