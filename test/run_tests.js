@@ -1661,6 +1661,34 @@ function inBox(x, y, box) {
         model.telemetry.media = { active: false, page: 'media', bcStep: 0 };
         r.render(model, { enabled: true, rightWidgetMode: 'media' }, 15300);
         assert.strictEqual(r.layers.right_widget.visible, true, 'right_widget visible for inactive media standby');
+        // Cycle 4: When media is paused/inactive (active: false), resolveRightWidgetPage must exclude 'media'
+        // from the cycle (trip -> off -> trip) with ZERO duplicate consecutive pages!
+        const { resolveRightWidgetPage } = require(path.join(APP_DIR, 'media_tracker'));
+        const idleSettings = { widgetMedia: true, widgetTrip: true, widgetTpms: false };
+        const p0 = resolveRightWidgetPage(idleSettings, { active: false, playing: false, bcStep: 0 }, false, 0);
+        const p1 = resolveRightWidgetPage(idleSettings, { active: false, playing: false, bcStep: 1 }, false, 0);
+        const p2 = resolveRightWidgetPage(idleSettings, { active: false, playing: false, bcStep: 2 }, false, 0);
+        assert.deepStrictEqual([p0, p1, p2], ['trip', 'off', 'trip'], 'inactive media must cycle trip -> off -> trip without duplicate consecutive pages');
+
+        // Cycle 5: Per-channel stalk isolation ('isc' vs 'isc_complete'), instant tap (heldMs >= 0),
+        // cross-channel dedup (< 420ms), and immediate onBcClick listener!
+        let bcCbCount = 0;
+        const mtCh = new MediaTracker({ onBcClick: () => { bcCbCount++; } });
+        mtCh.feedStalk({ operationColumnStalks: 0 }, 1000, 'isc');
+        mtCh.feedStalk({ operationColumnStalks: 16 }, 1005, 'isc_complete'); // different baseline on complete channel!
+        mtCh.feedStalk({ operationColumnStalks: 4 }, 1100, 'isc');
+        mtCh.feedStalk({ operationColumnStalks: 0 }, 1105, 'isc'); // 5ms quick tap must still trigger!
+        assert.strictEqual(mtCh.bcClicks, 1, 'isolated stalk channel must trigger even on fast 5ms pulse');
+        assert.strictEqual(bcCbCount, 1, 'onBcClick listener must fire immediately on BC click');
+        // Matching kombi_sel arriving 120ms later (< 420ms cross-source dedup) must NOT double-skip!
+        mtCh.feedKombiSelection({ statusActivationInstrumentPackContent: 1, statusActivationInstrumentPackBC: 1 }, 900);
+        assert.strictEqual(mtCh.feedKombiSelection({ statusActivationInstrumentPackContent: 2, statusActivationInstrumentPackBC: 2 }, 1220), false,
+            'kombi_sel within 420ms of stalk_bc must dedup instead of double-cycling');
+        // Genuine next press after 600ms advances cleanly:
+        assert.strictEqual(mtCh.feedKombiSelection({ statusActivationInstrumentPackContent: 3, statusActivationInstrumentPackBC: 3 }, 1820), true);
+        assert.strictEqual(bcCbCount, 2);
+        mtCh.stop();
+
         mt.stop();
     });
 
@@ -1774,6 +1802,34 @@ function inBox(x, y, box) {
         r.render(model, { enabled: true, widgetMedia: false, widgetTrip: false }, 6100);
         assert.strictEqual(r.lastSummary.isCharging, false);
         assert.strictEqual(r.lastSummary.rightWidgetPage, 'off', 'charging widget must disable automatically when not charging');
+        // Cycle 4: When media is paused/inactive (active: false), resolveRightWidgetPage must exclude 'media'
+        // from the cycle (trip -> off -> trip) with ZERO duplicate consecutive pages!
+        const { resolveRightWidgetPage } = require(path.join(APP_DIR, 'media_tracker'));
+        const idleSettings = { widgetMedia: true, widgetTrip: true, widgetTpms: false };
+        const p0 = resolveRightWidgetPage(idleSettings, { active: false, playing: false, bcStep: 0 }, false, 0);
+        const p1 = resolveRightWidgetPage(idleSettings, { active: false, playing: false, bcStep: 1 }, false, 0);
+        const p2 = resolveRightWidgetPage(idleSettings, { active: false, playing: false, bcStep: 2 }, false, 0);
+        assert.deepStrictEqual([p0, p1, p2], ['trip', 'off', 'trip'], 'inactive media must cycle trip -> off -> trip without duplicate consecutive pages');
+
+        // Cycle 5: Per-channel stalk isolation ('isc' vs 'isc_complete'), instant tap (heldMs >= 0),
+        // cross-channel dedup (< 420ms), and immediate onBcClick listener!
+        let bcCbCount = 0;
+        const mtCh = new MediaTracker({ onBcClick: () => { bcCbCount++; } });
+        mtCh.feedStalk({ operationColumnStalks: 0 }, 1000, 'isc');
+        mtCh.feedStalk({ operationColumnStalks: 16 }, 1005, 'isc_complete'); // different baseline on complete channel!
+        mtCh.feedStalk({ operationColumnStalks: 4 }, 1100, 'isc');
+        mtCh.feedStalk({ operationColumnStalks: 0 }, 1105, 'isc'); // 5ms quick tap must still trigger!
+        assert.strictEqual(mtCh.bcClicks, 1, 'isolated stalk channel must trigger even on fast 5ms pulse');
+        assert.strictEqual(bcCbCount, 1, 'onBcClick listener must fire immediately on BC click');
+        // Matching kombi_sel arriving 120ms later (< 420ms cross-source dedup) must NOT double-skip!
+        mtCh.feedKombiSelection({ statusActivationInstrumentPackContent: 1, statusActivationInstrumentPackBC: 1 }, 900);
+        assert.strictEqual(mtCh.feedKombiSelection({ statusActivationInstrumentPackContent: 2, statusActivationInstrumentPackBC: 2 }, 1220), false,
+            'kombi_sel within 420ms of stalk_bc must dedup instead of double-cycling');
+        // Genuine next press after 600ms advances cleanly:
+        assert.strictEqual(mtCh.feedKombiSelection({ statusActivationInstrumentPackContent: 3, statusActivationInstrumentPackBC: 3 }, 1820), true);
+        assert.strictEqual(bcCbCount, 2);
+        mtCh.stop();
+
         mt.stop();
     });
 
@@ -3231,7 +3287,7 @@ function inBox(x, y, box) {
         assert.strictEqual(appSpec.id, 'id7_cockpit_plus');
         assert.strictEqual(appSpec.title, 'Cockpit+');
         assert.strictEqual(appSpec.loggingId, 'OA7C');
-        assert.strictEqual(appSpec.requires && appSpec.requires['cluster-render'], '2.9.4');
+        assert.strictEqual(appSpec.requires && appSpec.requires['cluster-render'], '2.9.6');
         assert.strictEqual(appSpec.requires && appSpec.requires['waze-on-cluster'], '2.9.2');
         assert.strictEqual(appSpec.requires && appSpec.requires['cockpit-fullview'], '1.0.0');
         assert(!appSpec.npmFiles, 'jpeg_decoder.js must be bundled directly without npmFiles');
@@ -3412,68 +3468,75 @@ function inBox(x, y, box) {
         assert.strictEqual(lastHost3.mask_mode, 1);
         assert.strictEqual(lastHost3.mask_feather, 130);
 
-        // 1d. Native / legacy center / legacy off during driving RELEASES panel 0x203 and unhosts back to native 0x100
-        // so KOMBI4 restores genuine stock right-wing BC card (slot 0x200), disables software right_widget & speed,
-        // and keeps HUD (0x323) working normally!
-        for (const mMode of ['native', 'center', 'off']) {
-            const unhostsBefore = env1.ops.filter((o) => o.op === 'unhost' && o.target === 'map').length;
-            r1.render(model, { enabled: true, mapHostMode: mMode, mapBezelFeather: 'tight', clusterSpeedOverlay: 'on' }, 2200);
-            await wait(30);
-            assert.strictEqual(r1.lastSummary.nativePanelReleased, true, 'driving native mode must release panel 0x203 for stock 0x200 BC');
-            assert.strictEqual(r1.lastSummary.panelAllowed, false, 'panelAllowed must be false when 0x203 is released');
-            assert.strictEqual(r1.lastSummary.hostModeActive, 'native');
-            assert.strictEqual(r1.lastSummary.bezelMaskMode, 'off');
-            assert.strictEqual(r1.lastSummary.showClusterSpeed, false, 'Center Small Map must hide redrawn speed');
-            assert.strictEqual(r1.lastSummary.rightWidgetPage, 'off', 'Center Small Map must NOT draw software right_widget');
-            assert.strictEqual(r1.lastSummary.showHud, true, 'HUD must stay active while panel 0x203 is released');
-            Object.keys(r1.layers).forEach((lname) => {
-                if (r1.layers[lname].target === 'panel') {
-                    assert.strictEqual(r1.layers[lname].visible, false, 'panel layer ' + lname + ' must be hidden');
-                }
-            });
-            const unhostsAfter = env1.ops.filter((o) => o.op === 'unhost' && o.target === 'map').length;
-            assert(unhostsAfter >= 1, 'unhost("map") must be active in native mode (' + unhostsBefore + ' -> ' + unhostsAfter + ')');
-        }
+        // 1c2. Custom feather width ('custom' + mapBezelFeatherCustomPx = 44 -> sends mask_feather: 44)
+        r1.render(model, { enabled: true, mapHostMode: 'fullview_dials', mapBezelFeather: 'custom', mapBezelFeatherCustomPx: 44 }, 2000);
+        await wait(50);
+        const hostCustom = env1.ops.filter((o) => o.op === 'host').pop();
+        assert.strictEqual(hostCustom.mask_mode, 1);
+        assert.strictEqual(hostCustom.mask_feather, 44);
+        assert.strictEqual(r1.lastSummary.mapFeatherPx, 44);
 
-        // 1e. Engine-off Standby Map in Center Small Map (native) mode:
-        // When KOMBI4 locks slot 0x100 or engine is off during routing, temporarily wakes panel 0x203 with mask_mode=3
-        // (no software right card, no redrawn speed), then IMMEDIATELY releases 0x203 & restores stock BC when engine restarts
-        // (even BEFORE 'target map shown' arrives, avoiding standby lock deadlock)!
-        r1.cr.emit('target', 'map', 'waiting', '', 'slot locked', false, false);
+        // 1d. Center Small Map on panel 0x203 ('center_panel' / legacy 'center'):
+        // Consistent hosting on 0x203 in BOTH driving (mask_mode=2 with 0 km/h cutout) and engine-off (mask_mode=3),
+        // keeping outer vitals + right_widget active while hiding redrawn speed!
+        for (const cMode of ['center_panel', 'center']) {
+            r1.render(model, { enabled: true, mapHostMode: cMode, mapBezelFeather: 'custom', mapBezelFeatherCustomPx: 52, clusterSpeedOverlay: 'on' }, 2200);
+            await wait(30);
+            const hCenter = env1.ops.filter((o) => o.op === 'host').pop();
+            assert.strictEqual(r1.lastSummary.isCenterPanelMode, true);
+            assert.strictEqual(r1.lastSummary.panelAllowed, true);
+            assert.strictEqual(r1.lastSummary.hostModeActive, 'center_masked');
+            assert.strictEqual(r1.lastSummary.bezelMaskMode, 'center');
+            assert.strictEqual(hCenter.mask_mode, 2);
+            assert.strictEqual(hCenter.mask_feather, 52);
+            assert.strictEqual(r1.lastSummary.showClusterSpeed, false, 'center_panel hides redrawn speed');
+            assert.notStrictEqual(r1.lastSummary.rightWidgetPage, 'off', 'center_panel keeps Cockpit+ right_widget active');
+        }
         const standbyModel = Object.assign({}, model, {
             telemetry: { speedKmh: 0, rpm: 0, stage: null, program: 'D', gear: 0, navRouteActive: true, navHasLanes: false },
         });
-        r1.render(standbyModel, { enabled: true, mapHostMode: 'native' }, 3100);
-        await wait(50);
-        const standbyHost = env1.ops.filter((o) => o.op === 'host').pop();
-        assert.strictEqual(r1.lastSummary.standbyRescue, true, 'locked 0x100 / engine-off during routing must enter standby_center');
-        assert.strictEqual(r1.lastSummary.panelAllowed, true, 'standby rescue temporarily enables panel 0x203');
-        assert.strictEqual(r1.lastSummary.nativePanelReleased, false);
+        r1.render(standbyModel, { enabled: true, mapHostMode: 'center_panel', mapBezelFeather: 'standard' }, 2500);
+        await wait(40);
+        const hStandbyCenter = env1.ops.filter((o) => o.op === 'host').pop();
+        assert.strictEqual(r1.lastSummary.panelAllowed, true);
         assert.strictEqual(r1.lastSummary.hostModeActive, 'standby_center');
         assert.strictEqual(r1.lastSummary.bezelMaskMode, 'standby');
-        assert.strictEqual(standbyHost.mask_mode, 3, 'standby center must send mask_mode=3');
-        assert.strictEqual(r1.lastSummary.showClusterSpeed, false, 'standby center hides redrawn speed');
-        assert.strictEqual(r1.lastSummary.rightWidgetPage, 'off', 'standby center never shows software right_widget');
+        assert.strictEqual(hStandbyCenter.mask_mode, 3);
+        assert.notStrictEqual(r1.lastSummary.rightWidgetPage, 'off');
 
-        // Engine restarts (BEFORE target map shown event) -> clears standby rescue, unhosts 0x100, and hides 0x203!
+        // Engine restarts -> stays in center_panel mask_mode=2 cleanly
         const drivingModel = Object.assign({}, model, {
             telemetry: { speedKmh: 0, rpm: 850, stage: 'D', program: 'D', gear: 1, navRouteActive: true, navHasLanes: false },
         });
-        const unhostBeforeRestart = env1.ops.filter((o) => o.op === 'unhost' && o.target === 'map').length;
-        r1.render(drivingModel, { enabled: true, mapHostMode: 'native' }, 3600);
-        await wait(50);
-        const unhostAfterRestart = env1.ops.filter((o) => o.op === 'unhost' && o.target === 'map').length;
-        assert.strictEqual(r1.lastSummary.standbyRescue, false, 'engine start must clear standby rescue even before target map shown');
-        assert.strictEqual(r1.lastSummary.nativePanelReleased, true);
-        assert.strictEqual(r1.lastSummary.panelAllowed, false);
-        assert.strictEqual(r1.lastSummary.hostModeActive, 'native');
-        assert.strictEqual(r1.lastSummary.bezelMaskMode, 'off');
-        assert(unhostAfterRestart > unhostBeforeRestart, 'exiting standby must call unhost("map")');
-        Object.keys(r1.layers).forEach((lname) => {
-            if (r1.layers[lname].target === 'panel') {
-                assert.strictEqual(r1.layers[lname].visible, false, 'panel layer ' + lname + ' must hide on engine restart');
+        r1.render(drivingModel, { enabled: true, mapHostMode: 'center_panel' }, 2700);
+        await wait(40);
+        assert.strictEqual(r1.lastSummary.hostModeActive, 'center_masked');
+        assert.strictEqual(env1.ops.filter((o) => o.op === 'host').pop().mask_mode, 2);
+
+        // 1e. Pure Stock Mode ('native' / legacy 'off') releases panel 0x203 and unhosts to native 0x100
+        // in BOTH driving and engine-off so BMW KOMBI4 displays genuine stock map + stock 0x200 BC card while HUD stays active!
+        for (const mMode of ['native', 'off']) {
+            for (const testMod of [drivingModel, standbyModel]) {
+                const unhostsBefore = env1.ops.filter((o) => o.op === 'unhost' && o.target === 'map').length;
+                r1.render(testMod, { enabled: true, mapHostMode: mMode, clusterSpeedOverlay: 'on' }, 3100);
+                await wait(30);
+                assert.strictEqual(r1.lastSummary.isPureNativeMode, true);
+                assert.strictEqual(r1.lastSummary.nativePanelReleased, true, 'pure stock mode must release panel 0x203');
+                assert.strictEqual(r1.lastSummary.panelAllowed, false);
+                assert.strictEqual(r1.lastSummary.hostModeActive, 'native');
+                assert.strictEqual(r1.lastSummary.bezelMaskMode, 'off');
+                assert.strictEqual(r1.lastSummary.showClusterSpeed, false);
+                assert.strictEqual(r1.lastSummary.rightWidgetPage, 'off');
+                assert.strictEqual(r1.lastSummary.showHud, true, 'HUD stays active in pure stock mode');
+                Object.keys(r1.layers).forEach((lname) => {
+                    if (r1.layers[lname].target === 'panel') {
+                        assert.strictEqual(r1.layers[lname].visible, false, 'panel layer ' + lname + ' must hide in pure stock mode');
+                    }
+                });
+                const unhostsAfter = env1.ops.filter((o) => o.op === 'unhost' && o.target === 'map').length;
+                assert(unhostsAfter >= 1, 'unhost("map") must run in pure stock mode (' + unhostsBefore + ' -> ' + unhostsAfter + ')');
             }
-        });
+        }
 
         // Disabling Cockpit+ unhosts back to native 0x100
         r1.render(drivingModel, { enabled: false, mapHostMode: 'native' }, 3900);

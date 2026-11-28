@@ -252,6 +252,11 @@ function createBackgroundRuntime(bg) {
     }
 
     hub.start();
+    if (hub.mediaTracker) {
+        hub.mediaTracker.onBcClick = () => {
+            try { state.tick(Date.now(), false); } catch (e) { log.warn('bc tick: ' + (e.message || e)); }
+        };
+    }
     renderer.connect();
     hub.syncDemand(settings.values, { diagVisible: false });
 

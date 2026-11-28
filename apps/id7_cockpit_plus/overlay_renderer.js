@@ -651,10 +651,10 @@ class OverlayRenderer {
         };
     }
 
-    _syncMapHost(mode, featherMode, standbyCenter, panelAllowed) {
-        const cleanMode = (mode === 'native' || mode === 'center' || mode === 'off')
+    _syncMapHost(mode, featherMode, standbyCenter, panelAllowed, customFeatherPx) {
+        const cleanMode = (mode === 'native' || mode === 'off')
             ? 'native'
-            : 'fullview_dials';
+            : ((mode === 'center_panel' || mode === 'center') ? 'center_panel' : 'fullview_dials');
         this.userMapMode = cleanMode;
         const canShaderHost = Boolean(panelAllowed) && (!this.ready || this.crHostMask);
         let effectiveMode = 'native';
@@ -663,16 +663,19 @@ class OverlayRenderer {
             if (cleanMode === 'fullview_dials') {
                 effectiveMode = 'fullview_dials';
                 maskModeNum = this.crHostMask ? 1 : 0;
-            } else if (standbyCenter) {
-                effectiveMode = 'standby_center';
-                maskModeNum = this.crHostMask ? 3 : 0;
+            } else if (cleanMode === 'center_panel') {
+                effectiveMode = standbyCenter ? 'standby_center' : 'center_masked';
+                maskModeNum = this.crHostMask ? (standbyCenter ? 3 : 2) : 0;
             }
         }
         this.hostModeActive = effectiveMode;
 
         const wantsHost = effectiveMode !== 'native';
-        const featherPx = featherMode === 'tight' ? 68 : (featherMode === 'wide' ? 130 : 96);
-        this.bezelMaskMode = maskModeNum === 1 ? 'dials' : (maskModeNum === 3 ? 'standby' : 'off');
+        const featherPx = featherMode === 'tight' ? 68
+            : (featherMode === 'wide' ? 130
+                : (featherMode === 'custom' ? clamp(Math.round(Number(customFeatherPx) || 96), 28, 160) : 96));
+        this.mapFeatherPx = featherPx;
+        this.bezelMaskMode = maskModeNum === 1 ? 'dials' : (maskModeNum === 2 ? 'center' : (maskModeNum === 3 ? 'standby' : 'off'));
         if (!this.cr) return;
 
         const key = effectiveMode + '|' + maskModeNum + '|' + featherPx + '|' + (this.crHostMask ? '1' : '0');
@@ -899,19 +902,19 @@ class OverlayRenderer {
         const t = model.telemetry || {};
         const eff = model.efficiency || {};
 
-        // Consistent Cluster Display Mode:
-        //   - 'panel_only' (default): FullView uses 0x203 (outer vitals + Right-Wing Widget + FullView map);
-        //     Center Small Map ('native') releases panel 0x203 during normal driving so KOMBI4 restores the genuine stock 0x200 BC card
-        //     (and only wakes 0x203 with mask_mode=3 during engine-off standby while routing).
-        //   - 'map_only': Outer Vitals Only on 0x203 (keeps outer vitals in original rim positions)
-        //   (Falls back to 0x100 'map' layer overlay only if legacy 0x202 conflict blocks 0x203.)
+        // Consistent Cluster Map Display Modes:
+        //   - 'fullview_dials' (default): FullView Map on 0x203 (mask_mode=1) + all outer vitals, nav cards & right BC widget.
+        //   - 'center_panel': Center Small Map kept consistently on 0x203 in both driving (mask_mode=2 with 0 km/h pocket)
+        //     and engine-off (mask_mode=3 symmetric contour without 0 km/h pocket), keeping right BC widget & overlays active.
+        //   - 'native': Pure Stock Mode on 0x100 — completely releases panel 0x203 in both driving and engine-off
+        //     so KOMBI4 displays genuine stock 0x100 map + stock 0x200 right BC card while HUD (0x323) stays active.
         const rawSlotMode = s.clusterSlotMode || 'panel_only';
         const clusterSlotMode = rawSlotMode === 'map_only' ? 'map_only' : 'panel_only';
         const isOuterOnlyMode = clusterSlotMode === 'map_only';
         const canPanel = this.canUsePanel();
         const basePanelAvailable = Boolean(wantCluster && canPanel);
 
-        // HUD navigation & route state (needed before standby map rescue check):
+        // HUD navigation & route state (needed before standby map check):
         const hudNavMode = s.hudNavMode || 'own_nav_minimap';
         const hn = t.hudNav || null;
         const wocHudOn = Boolean(hn && hn.wocHudShowing);
@@ -920,18 +923,14 @@ class OverlayRenderer {
         const routeOn = Boolean((hn && hn.routeActive) || t.navRouteActive);
         const lanesOn = Boolean((hn && hn.hasLanes) || t.navHasLanes);
 
-        // Native Center Small Map (0x100 + genuine stock 0x200 BC card) & Engine-Off Standby Rescue:
-        //   - On KOMBI4, any visible layer on panel 0x203 hides BMW's stock right-wing BC widget (slot 0x200).
-        //     So in Center Small Map ('native') driving mode, release panel 0x203 completely and unhost back to 0x100.
-        //   - When engine is OFF / 0x100 locked during active routing or Waze, temporarily wake panel 0x203
-        //     with mask_mode=3 (no redrawn speed / no software right card), then immediately release 0x203 once engine restarts.
         this._readClusterRenderStatus(now);
-        const rawMapMode = (s.mapHostMode === 'native' || s.mapHostMode === 'center' || s.mapHostMode === 'off')
+        const rawMapMode = (s.mapHostMode === 'native' || s.mapHostMode === 'off')
             ? 'native'
-            : 'fullview_dials';
-        const isNativeMapMode = rawMapMode === 'native';
+            : ((s.mapHostMode === 'center_panel' || s.mapHostMode === 'center') ? 'center_panel' : 'fullview_dials');
+        const isPureNativeMode = rawMapMode === 'native';
+        const isCenterPanelMode = rawMapMode === 'center_panel';
+        const isNativeMapMode = isPureNativeMode || isCenterPanelMode;
         const wazeSlotLocked = Boolean(this.wazeStatus && /locked/i.test((this.wazeStatus.error || '') + ' ' + (this.wazeStatus.reason || '')));
-        const wazePresent = Boolean(wazeOn || (this.wazeStatus && this.wazeStatus.state && this.wazeStatus.state !== 'off'));
         const drivingActive = Boolean(
             (typeof t.rpm === 'number' && t.rpm > 100) ||
             t.stage === 'D' ||
@@ -944,16 +943,16 @@ class OverlayRenderer {
             (t.rpm === 0 || t.rpm === null || t.rpm === undefined) &&
             (t.speedKmh === null || t.speedKmh === undefined || t.speedKmh < 0.5)
         );
-        if (!basePanelAvailable || isOuterOnlyMode || !isNativeMapMode || (!routeOn && !wazePresent)) {
+        if (!basePanelAvailable || isOuterOnlyMode || !isCenterPanelMode) {
             this._standbyRescueActive = false;
-        } else if (this._standbyRescueActive && (drivingActive || this.mapTargetState === 'shown' || (!this.mapSlotLocked && !wazeSlotLocked && !engineOffStandby))) {
+        } else if (drivingActive || (!this.mapSlotLocked && !wazeSlotLocked && !engineOffStandby)) {
             this._standbyRescueActive = false;
             if (drivingActive) this.mapSlotLocked = false;
-        } else if (!drivingActive && (this.mapSlotLocked || wazeSlotLocked || engineOffStandby) && (routeOn || wazePresent)) {
+        } else if (this.mapSlotLocked || wazeSlotLocked || engineOffStandby) {
             this._standbyRescueActive = true;
         }
         this.standbyRescue = this._standbyRescueActive;
-        const nativePanelReleased = Boolean(basePanelAvailable && !isOuterOnlyMode && isNativeMapMode && !this._standbyRescueActive);
+        const nativePanelReleased = Boolean(basePanelAvailable && !isOuterOnlyMode && isPureNativeMode);
         let panelAllowed = false;
         let showMapOverlay = false;
         if (wantCluster) {
@@ -961,7 +960,7 @@ class OverlayRenderer {
             showMapOverlay = !canPanel && s.fallbackMapBar !== false && wazeOn;
         }
         const wantHostMode = (panelAllowed && !isOuterOnlyMode) ? rawMapMode : 'native';
-        this._syncMapHost(wantHostMode, s.mapBezelFeather || 'standard', this._standbyRescueActive, panelAllowed && !isOuterOnlyMode);
+        this._syncMapHost(wantHostMode, s.mapBezelFeather || 'standard', this._standbyRescueActive, panelAllowed && !isOuterOnlyMode, s.mapBezelFeatherCustomPx);
 
         let hudYieldedToNav = false;
         let hudYieldReason = '';
@@ -1053,7 +1052,7 @@ class OverlayRenderer {
             this._bcBase = curBcStep;
         }
         const activeAlert = (rawAlert && !this._alertDismissed) ? rawAlert : null;
-        const rightWidgetPage = (!panelAllowed || isOuterOnlyMode || isNativeMapMode) ? 'off'
+        const rightWidgetPage = (!panelAllowed || isOuterOnlyMode || isPureNativeMode) ? 'off'
             : (activeAlert ? 'tpms' : resolveRightWidgetPage(s, media, isCharging, this._bcBase));
 
         let hero;
@@ -1228,6 +1227,8 @@ class OverlayRenderer {
             hostModeActive: this.hostModeActive,
             userMapMode: this.userMapMode,
             isNativeMapMode,
+            isPureNativeMode,
+            isCenterPanelMode,
             isOuterOnlyMode,
             nativePanelReleased,
             standbyRescue: this.standbyRescue,
@@ -1235,6 +1236,7 @@ class OverlayRenderer {
             crHostMask: this.crHostMask,
             crRenderState: this.crRenderState,
             bezelMaskMode: this.bezelMaskMode,
+            mapFeatherPx: this.mapFeatherPx || 96,
             hostingState: this.hostingState,
             hostingReason: this.hostingReason,
             mapHostedInto: this.mapHostedInto,

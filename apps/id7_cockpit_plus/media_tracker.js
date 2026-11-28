@@ -366,7 +366,8 @@ function getDemoCover() {
 }
 
 class MediaTracker {
-    constructor() {
+    constructor(opts) {
+        const o = opts || {};
         this.hmiMeta = null;
         this.hmiMainThird = '';
         this.mpMeta = null;
@@ -388,16 +389,16 @@ class MediaTracker {
         this._hmiSub = null;
         this._mpSub = null;
 
-        // Right-wing BC page cycling state (checkbox-driven; high-beam double-tap removed)
+        // Right-wing BC page cycling state (checkbox-driven; isolated per-channel stalk tracking)
         this.bcStep = 0;
         this.pageIndex = 0;
         this.bcClicks = 0;
         this.lastBcAt = 0;
         this.lastBcSource = '';
+        this.onBcClick = typeof o.onBcClick === 'function' ? o.onBcClick : null;
         this._kombiSelBase = null;
         this._stalkRest = null;
-        this._stalkDownVal = null;
-        this._stalkDownAt = 0;
+        this._stalkChannels = Object.create(null);
         this._lastTurnSignalAt = 0;
         this.rawStalk = null;
         this.rawKombiSel = null;
@@ -666,12 +667,17 @@ class MediaTracker {
 
     triggerBcClick(reason, nowMs) {
         const now = typeof nowMs === 'number' ? nowMs : Date.now();
-        if (now - this.lastBcAt < 220) return false;
+        const src = reason || 'bc';
+        const minGapMs = (this.lastBcSource && this.lastBcSource !== src) ? 420 : 160;
+        if (this.lastBcAt > 0 && now - this.lastBcAt < minGapMs) return false;
         this.lastBcAt = now;
         this.bcClicks++;
         this.bcStep++;
-        this.lastBcSource = reason || 'bc';
+        this.lastBcSource = src;
         this.pageIndex = (this.pageIndex + 1) % PAGES.length;
+        if (typeof this.onBcClick === 'function') {
+            try { this.onBcClick(this.bcStep, src); } catch (e) { /* ignore listener errors */ }
+        }
         return true;
     }
 
@@ -700,37 +706,43 @@ class MediaTracker {
         this._lastTurnSignalAt = typeof nowMs === 'number' ? nowMs : Date.now();
     }
 
-    feedStalk(v, nowMs) {
+    feedStalk(v, nowMs, channel) {
         const now = typeof nowMs === 'number' ? nowMs : Date.now();
         const raw = isObj(v) ? v.operationColumnStalks : v;
         if (typeof raw !== 'number' || !isFinite(raw) || raw === 255) return false;
         this.rawStalk = raw;
-        if (this._stalkRest === null) {
+        const chKey = channel || 'default';
+        let st = this._stalkChannels[chKey];
+        if (!st) {
+            st = { rest: raw, downVal: null, downAt: 0 };
+            this._stalkChannels[chKey] = st;
             this._stalkRest = raw;
             return false;
         }
         // Ignore changes coinciding with turn-signal actuation
         if (now - this._lastTurnSignalAt < 320) {
-            this._stalkDownVal = null;
+            st.downVal = null;
+            st.rest = raw;
             this._stalkRest = raw;
             return false;
         }
-        if (raw !== this._stalkRest) {
-            if (this._stalkDownVal === null) {
-                this._stalkDownVal = raw;
-                this._stalkDownAt = now;
-            } else if (now - this._stalkDownAt > 1500) {
+        if (raw !== st.rest) {
+            if (st.downVal === null) {
+                st.downVal = raw;
+                st.downAt = now;
+            } else if (now - st.downAt > 1500) {
                 // Sustained new stalk position (e.g. steady high-beam lever), adopt as new rest
+                st.rest = raw;
+                st.downVal = null;
                 this._stalkRest = raw;
-                this._stalkDownVal = null;
             }
             return false;
         }
-        // Returned to resting value: if it was a momentary 20..1100ms button pulse, count as BC click!
-        if (this._stalkDownVal !== null) {
-            const heldMs = now - this._stalkDownAt;
-            this._stalkDownVal = null;
-            if (heldMs >= 20 && heldMs <= 1100 && now - this._lastTurnSignalAt >= 320) {
+        // Returned to resting value: if it was a momentary <=1200ms button pulse, count as BC click!
+        if (st.downVal !== null) {
+            const heldMs = now - st.downAt;
+            st.downVal = null;
+            if (heldMs >= 0 && heldMs <= 1200 && now - this._lastTurnSignalAt >= 320) {
                 return this.triggerBcClick('stalk_bc', now);
             }
         }
@@ -897,8 +909,8 @@ class MediaTracker {
                     '1',
                     {
                         StatusFunctionsIndicators: (v) => this.feedTurnSignal(v, Date.now()),
-                        IndicatorSteeringColumn: (v) => this.feedStalk(v, Date.now()),
-                        IndicatorSteeringColumnComplete: (v) => this.feedStalk(v, Date.now()),
+                        IndicatorSteeringColumn: (v) => this.feedStalk(v, Date.now(), 'isc'),
+                        IndicatorSteeringColumnComplete: (v) => this.feedStalk(v, Date.now(), 'isc_complete'),
                     },
                     log
                 ));
@@ -948,18 +960,17 @@ function resolveRightWidgetPage(settingsObj, media, isCharging, bcBase) {
     if (allowTpms) enabled.push('tpms');
     if (!enabled.length) return 'off';
 
-    const cycle = enabled.concat(['off']);
+    const activeEnabled = (!isCharging && allowMedia && !(media && media.active) && enabled.length > 1)
+        ? enabled.filter((p) => p !== 'media')
+        : enabled;
+    const cycle = activeEnabled.concat(['off']);
     const stepRaw = (media && typeof media.bcStep === 'number') ? media.bcStep
         : (media && typeof media.bcClicks === 'number' ? media.bcClicks
             : (media && media.page ? Math.max(0, PAGES.indexOf(media.page)) : 0));
     const base = (typeof bcBase === 'number' && isFinite(bcBase)) ? bcBase : 0;
     const relStep = stepRaw - base;
     const idx = ((relStep % cycle.length) + cycle.length) % cycle.length;
-    const picked = cycle[idx];
-    if (!isCharging && idx === 0 && picked === 'media' && !(media && media.active) && enabled.indexOf('trip') >= 0) {
-        return 'trip';
-    }
-    return picked;
+    return cycle[idx];
 }
 
 module.exports = {
