@@ -12,7 +12,7 @@
 ## 简体中文
 
 > [!NOTE]
-> **实车验证状态**：核心 `FullView` 地图投屏（高德地图、Apple Maps 全程路线与纯地图去重补丁）、转向卡、ETA 胶囊、右侧媒体卡片及简体中文菜单已在 **BMW G20（iDrive 7 `MGU P18_23w44.2-1-3` + KOMBI4 仪表 + CarPlay）** 上实测跑通；`v0.9.13` 基于与多媒体背景同源的 KOMBI4 实车单应性标定轮廓（`WING_TOP_Y` / `WING_OUTER_X` / `WING_BOTTOM_Y`）升级全屏遮罩 SDF 曲线以精准贴合双表盘弧度，修复公制模式下「车内温度」默认与原车 `+14.5°C` 重叠的问题，并保留居中标准小地图 (`native`) 正常行车释放 `0x203` 直接显示原厂右侧 BC 卡片（`0x200`）与熄火保活接管机制。在车机安装/调试前请做好配置备份，切勿卸载 `mgu-store` 与 `mgu-deploy` 等基础组件。
+> **实车验证状态**：核心 `FullView` 地图投屏（高德地图、Apple Maps 全程路线与纯地图去重补丁）、转向卡、ETA 胶囊、右侧媒体卡片及简体中文菜单已在 **BMW G20（iDrive 7 `MGU P18_23w44.2-1-3` + KOMBI4 仪表 + CarPlay）** 上实测跑通；`v0.9.15` 优化了顶部 `340 / 100 / 7` 刻度区的渐变眉线，改为单调连续的平滑上眉渐隐（昼夜浅/深色地图下均无局部暗斑，保持左右对称与自然通透）；同时完整保留 **全屏融合双表盘 / 居中标准小地图（`0x203` 保留外圈与右卡）/ 纯原厂模式（`0x100` + 原厂 `0x200`）** 三模式切换、`y=120..600` 对称居中、**`28..160 px` 自定义表圈渐变宽度**、即时响应的 BC 按键与更易读的中文菜单。在车机安装/调试前请做好配置备份，切勿卸载 `mgu-store` 与 `mgu-deploy` 等基础组件。
 
 ![Cockpit+ 全屏仪表驾驶舱全景示意](docs/cockpit-overview.png)
 
@@ -20,9 +20,10 @@
 
 ### 核心功能一览
 
-- **两种平滑无锯齿地图模式**（全屏模式支持 `68 / 96（默认）/ 130 px` 边缘柔化调节）：
-  1. **`全屏地图 · 融合双表盘 (fullview_dials`，默认)**：地图扩展至 `y=0..668`（下延至抬高的 ETA 胶囊背后，严格避让 `GEAR_WIN`），由 `cluster-render 2.9.4` 采用与多媒体专辑背景同源的 **KOMBI4 实车单应性标定外沿轮廓 (`WING_TOP_Y` / `WING_OUTER_X` / `WING_BOTTOM_Y`) + C1 连续平滑 SDF**，顶部贴合原车速度/转速上眉弧线自然过渡，两侧柔和衔接 `340..30`、`7..1`、限速与 `1/min x1000` 内沿，同时保留完整外圈车况（车内温度自动避让公制车外温度 `+14.5°C`：燃油车位于 `x=1712`，混动位于 `x=1170`）、5AU 转向卡、ETA 胶囊与右侧多功能卡片。
-  2. **`居中标准小地图 (native)`**：正常行车时彻底释放 `panel 0x203` 并将地图交回原生 `0x100` 槽位（不显示软件重绘右卡，也不渲染 `0x203` 叠层），**直接恢复 100% 原厂右侧 BC 卡片（`slot 0x200`，方向盘 BC 键原生响应）与原厂双表盘/车速**，HUD（`0x323`）继续正常运行；当车辆熄火且处于导航中（`0x100` 被锁）时，自动临时借用 `0x203`（`mask_mode=3`）保活中央地图（同样不重绘右侧卡片），一旦重新点火行车立即释放 `0x203` 并秒回原厂 BC 卡片。
+- **三种仪表地图显示模式**（支持 `68 / 96（默认）/ 130 px` 档位或 `28..160 px` 自定义渐变宽度）：
+  1. **`全屏融合双表盘 (fullview_dials`，默认)`**：地图扩展至 `y=0..668`（下延至抬高的 ETA 胶囊背后，严格避让 `GEAR_WIN`），由 `cluster-render 2.9.6` 采用与多媒体专辑背景同源的 **KOMBI4 实车单应性标定外沿轮廓 + C1 连续平滑 SDF**，顶部沿 `340 / 100 / 7` 刻度区采用连续平滑上眉弧线渐隐过渡（白天/夜间地图均无突兀暗斑），同时保留完整外圈车况（车内温度自动避让公制 `+14.5°C`：燃油车位于 `x=1712`，混动位于 `x=1170`）、5AU 转向卡、ETA 胶囊与右侧多功能卡片。
+  2. **`居中标准小地图 (center_panel)`**：无论行车（`mask_mode=2`，精准避让原车 `0 km/h`）还是熄火（`mask_mode=3`），始终统一在 `0x203` 渲染，**`y=120..600` 严格上下对称一致**，且全程保留右侧 BC 卡片、5AU 转向卡、ETA 胶囊与外圈数据。
+  3. **`纯原厂模式 (native)`**：行车与熄火全程释放 `panel 0x203` 并交回原生 `0x100`，彻底回归原厂小地图与 **100% 原厂右侧 BC 卡片（`slot 0x200`）**（HUD `0x323` 仍正常增强工作）。
 - **精简导航卡片不重复 & ETA 上移避让**：仪表端复用原厂底部车道栏，**顶部 5AU 区域放置 iOS 转向提示卡（`y=18`）**；**底部 ETA 胶囊默认上移 20 px 至 `y=628`**，熄火显示 `Total km` 总里程时不再重叠。
 - **Cockpit+ 外圈读数稳固保留**：切换为 **`仅外圈车况读数 (map_only)`** 时，油温/水温、12V 电量、混动 HV 电量、刹车力度条、档位与车内温度保留在各自原生外圈位置（`0x203` 关闭右侧卡片与全屏托管）。
 - **Apple Maps 实车专项优化**：通过 `--safe 840x570+396+40`（`280×190 pt @3x`）与纯地图模式 `maps:/car/instrumentcluster/map`（`itemType 1`），开始路线导航时稳定显示全程路径且不弹出苹果自带重复灰底卡片。
@@ -42,12 +43,12 @@
 
 | 组件名 | 类型 | 版本 | 说明 |
 | :--- | :--- | :--- | :--- |
-| **`cluster-render`** | 工具 | `2.9.4` | RAMSES 19 + Dcsm2 仪表与 HUD 合成器，支持 `1632x720`、`host_layers` 与实车标定 KOMBI4 表圈轮廓平滑 SDF `mask_mode=1/3` 着色器遮罩（基于 `robertnisipeanu/idrive-apps`） |
+| **`cluster-render`** | 工具 | `2.9.6` | RAMSES 19 + Dcsm2 仪表与 HUD 合成器，支持 `1632x720`、`host_layers` 与实车标定 KOMBI4 表圈轮廓 + 平滑单调 `340/100/7` 上眉过渡 + 上下对称 `mask_mode=1/2/3` 着色器遮罩（基于 `robertnisipeanu/idrive-apps`） |
 | **`waze-on-cluster`** | 工具 | `2.9.2` | FullView 全屏 CarPlay / AA 地图解码器（`1632x720`、`--safe 840x570+396+40`、`idle_ms=600000` 熄火保活）与 HUD 投影 |
 | **`robertn_waze_cluster`** | 应用 | `0.6.17` | *Maps on cluster* 车机控制界面（已适配识别 `1632x720` 全屏补丁状态） |
 | **`mgu-render`** | 工具 *（可选）* | `0.6.26` | OpenGL ES 2 GPU 渲染守护进程（源自 `robertnisipeanu/mgu-store`） |
 | **`cockpit-fullview`** | 工具 | `1.0.0` | 自动可逆修复旧版 `cluster-render.local.conf` 槽位冲突并禁用重叠原生 C++ 浮窗 |
-| **`id7_cockpit_plus`** | 应用 | `0.9.13` | **Cockpit+ 主程序**：与多媒体背景同源标定的平滑 SDF 全屏融合双表盘地图、居中模式释放 `0x203` 回归原厂右侧 BC 卡片（含熄火保活接管与点火自动恢复）、公制车内温度避让、5AU 顶置转向卡、ETA 避让总里程、全套外圈/HUD 控件 |
+| **`id7_cockpit_plus`** | 应用 | `0.9.15` | **Cockpit+ 主程序**：三模式地图切换（全屏融合 / `0x203` 对称居中 / 纯原厂 `0x100`+`0x200`）、昼夜无暗斑平滑 `340/100/7` 眉线过渡、自定义 `28..160px` 渐变宽度、丝滑 BC 切换、公制车内温度避让、5AU 顶置转向卡、ETA 与 HUD 控件 |
 
 ### 通过 MGU Store 安装（Releases 源）
 
@@ -62,7 +63,7 @@
 
 > [!IMPORTANT]
 > - 切勿卸载 **`mgu-store`** 和 **`mgu-deploy`**。
-> - 如果此前曾通过第三方安装包/其他源安装过 `cluster-render`，请在 MGU Store 的 **Sources** 中**暂时仅保留 `Hyperionism/idrive7-cockpit-plus` 一个包含 `cluster-render` 的软件源**再点击安装/更新，即可平滑升级至 `2.9.4`。
+> - 如果此前曾通过第三方安装包/其他源安装过 `cluster-render`，请在 MGU Store 的 **Sources** 中**暂时仅保留 `Hyperionism/idrive7-cockpit-plus` 一个包含 `cluster-render` 的软件源**再点击安装/更新，即可平滑升级至 `2.9.6`。
 
 ### 本地构建、测试与桌面模拟器
 
@@ -85,7 +86,7 @@ npm run bench
 ## English
 
 > [!NOTE]
-> **Real-Vehicle Verified Base + v0.9.13 Calibrated Bezel SDF (`2.9.4`), Metric Cabin Temp Fix & Stock BC Restoration (`0x200`)**: Core `1632px` FullView CarPlay projection (AMAP & Apple Maps full-route with pure map-only `itemType 1`), turn card, ETA pill, right-wing media widget, and `zh-CN` UI have been verified on a physical **BMW G20 (iDrive 7 `MGU P18_23w44.2-1-3`, KOMBI4, CarPlay)**. `v0.9.13` unifies FullView (`cluster-render 2.9.4`, `mask_mode=1`) onto the same homography-calibrated KOMBI4 outer bezel contour (`WING_TOP_Y` / `WING_OUTER_X` / `WING_BOTTOM_Y`) used by `buildStockBackdrop`, eliminates Metric `cabin_temp` overlap against stock `+14.5°C` (`x=1712` ICE, `x=1170` Metric PHEV), and keeps Center Small Map (`native`) releasing `panel 0x203` during driving so BMW's genuine stock BC card (`slot 0x200`) and native gauges show cleanly (with temporary `mask_mode=3` rescue during engine-off standby).
+> **Real-Vehicle Verified Base + v0.9.15 Smooth Monotonic `340/100/7` Brow Transition (`2.9.6`), Three Map Modes, Custom Feather & Smooth BC Cycling**: Core `1632px` FullView CarPlay projection (AMAP & Apple Maps full-route with pure map-only `itemType 1`), turn card, ETA pill, right-wing media widget, and `zh-CN` UI have been verified on a physical **BMW G20 (iDrive 7 `MGU P18_23w44.2-1-3`, KOMBI4, CarPlay)**. `v0.9.15` (`cluster-render 2.9.6`) replaces the detached elliptical top-halo with a smooth monotonic top-brow curve and uniform feathering across `340 / 100 / 7` (eliminating dark blotches on daytime light maps while staying clean and readable in both day and night modes), alongside three consistent map modes, symmetric Center Small Map (`y=120..600`), custom `28..160 px` bezel fade width, immediate jitter-free BC cycling, and clear `zh-CN` labels.
 
 ![Cockpit+ KOMBI4 Overview Diagram](docs/cockpit-overview.png)
 
@@ -93,9 +94,10 @@ npm run bench
 
 ### Key Features
 
-- **Two KOMBI4 Map Modes** (`68 / 96 (default) / 130 px` feather width in FullView):
-  1. **`FullView Map (fullview_dials`, default)**: Extends the hosted map vertically across `y=0..668` while `cluster-render 2.9.4` evaluates a C1-continuous analytic SDF derived from the same homography-calibrated KOMBI4 outer bezel contour (`WING_TOP_Y` / `WING_OUTER_X` / `WING_BOTTOM_Y`) used by the media album-art backdrop, softly feathering over the inner numeral edges (`340..30`, `7..1`, limit sign, `1/min x1000`), paired with all `0x203` outer vitals (including non-overlapping Metric `cabin_temp` at `x=1712` ICE / `x=1170` PHEV), 5AU turn card, raised ETA pill, frameless speed, and BC right-wing widget.
-  2. **`Center Small Map (native)`**: Completely releases `panel 0x203` and unhosts back to `slot 0x100` during normal driving (disabling software right card & `0x203` overlays) so BMW's **genuine stock right-wing BC card (`slot 0x200`)** and stock speed/gauges work 100% natively while HUD (`0x323`) keeps running. When the engine is OFF during routing (`0x100` locked), `panel 0x203` (`mask_mode=3`, without software right card) temporarily keeps the center map alive, then automatically releases `0x203` as soon as the engine restarts.
+- **Three KOMBI4 Map Modes** (`68 / 96 / 130 px` presets or custom `28..160 px` fade width):
+  1. **`FullView Map (fullview_dials`, default)**: Extends the hosted map vertically across `y=0..668` while `cluster-render 2.9.6` evaluates a C1-continuous analytic SDF derived from `buildStockBackdrop`'s KOMBI4 outer bezel contour (`WING_TOP_Y` / `WING_OUTER_X` / `WING_BOTTOM_Y`) with a smooth monotonic brow transition across `340 / 100 / 7` (no daytime blotch), paired with all `0x203` outer vitals (including non-overlapping Metric `cabin_temp` at `x=1712` ICE / `x=1170` PHEV), 5AU turn card, raised ETA pill, frameless speed, and BC right-wing widget.
+  2. **`Center Small Map (center_panel)`**: Stays consistently hosted on `panel 0x203` in both driving (`mask_mode=2`, `0 km/h` cutout) and engine-off (`mask_mode=3`) with strict top-bottom symmetry (`y=120..600`), keeping all `0x203` outer vitals, nav cards, and Cockpit+'s BC right-wing widget active.
+  3. **`Pure Stock Map (native)`**: Releases `panel 0x203` and unhosts back to `slot 0x100` in both driving and engine-off so BMW's **genuine stock `0x100` map + `0x200` right BC card** run 100% natively while HUD (`0x323`) keeps running.
 - **Outer Vitals Preservation**: Switching `clusterSlotMode` to **Outer Vitals Only (`map_only`)** keeps coolant/oil, 12V, HV SoC, brake rail, `D1–D8`, cabin temp, and below-speed telemetry in their original outer `0x203` positions while hiding the right widget and fullview host.
 - **Apple Maps Pure Map-Only Route Fix**: Uses `--safe 840x570+396+40` (`280×190 pt @3x`) and `maps:/car/instrumentcluster/map` (`itemType 1`) so active Apple Maps routes stay rendered without duplicate grey turn cards.
 - **Calibrated KOMBI4 Panel (`0x203`) & HUD (`0x323`) Widgets**:
@@ -109,12 +111,12 @@ npm run bench
 
 | Component | Kind | Version | Purpose |
 | :--- | :--- | :--- | :--- |
-| **`cluster-render`** | Tool | `2.9.4` | Shared RAMSES 19 + Dcsm2 cluster/HUD compositor with `1632x720`, `host_layers`, and calibrated KOMBI4 bezel SDF `mask_mode=1/3` cutouts |
+| **`cluster-render`** | Tool | `2.9.6` | Shared RAMSES 19 + Dcsm2 cluster/HUD compositor with `1632x720`, `host_layers`, calibrated KOMBI4 bezel SDF + monotonic `340/100/7` brow & symmetric `mask_mode=1/2/3` |
 | **`waze-on-cluster`** | Tool | `2.9.2` | FullView CarPlay / AA H.264 decoder (`1632x720`, `--safe 840x570+396+40`, `idle_ms=600000` standby keep-alive) + HUD projection |
 | **`robertn_waze_cluster`** | App | `0.6.17` | *Maps on Cluster* iDrive UI (updated to recognize `1632x720` FullView patching) |
 | **`mgu-render`** | Tool *(optional)* | `0.6.26` | 60 fps OpenGL ES 2 GPU renderer daemon (from `robertnisipeanu/mgu-store`) |
 | **`cockpit-fullview`** | Tool | `1.0.0` | Reversibly repairs conflicting `cluster-render.local.conf` overrides and disables overlapping native C++ pods |
-| **`id7_cockpit_plus`** | App | `0.9.13` | **Cockpit+**: calibrated KOMBI4 bezel SDF FullView (`mask_mode=1`), Center Small Map releasing `0x203` for genuine stock `0x200` BC card + engine-off standby rescue (`mask_mode=3`), non-overlapping Metric cabin temp, 5AU top turn card, raised ETA pill, HUD nav & Position Studio |
+| **`id7_cockpit_plus`** | App | `0.9.15` | **Cockpit+**: 3 map modes (FullView w/ monotonic `340/100/7` brow transition, symmetric `0x203` Center Small Map, Pure Stock `0x100+0x200`), custom `28..160px` fade, smooth BC cycling, 5AU turn card, ETA pill, HUD nav & Position Studio |
 
 ### Install via MGU Store (Releases Feed)
 
